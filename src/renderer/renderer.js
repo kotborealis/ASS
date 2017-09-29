@@ -72,10 +72,14 @@ var setTagsStyle = function(dia) {
       if (t.q === 0) {} // TODO
       if (t.q === 1) {
         cssText.push('word-break:break-all');
+        cssText.push('word-break:break-word'); // chrome has non-standard value "break-word", which is the fanciest one
+        // firefox has no implementation for this value, so it will fallback to ugly break-all
+
         cssText.push('white-space:normal');
       }
       if (t.q === 2) {
         cssText.push('word-break:normal');
+        cssText.push('word-break:break-word'); // only in chrome, otherwise falls back to 'normal'
         cssText.push('white-space:nowrap');
       }
       if (t.q === 3) {} // TODO
@@ -90,6 +94,7 @@ var setTagsStyle = function(dia) {
       if (!t.p) {
         cssText.push('transform-style:preserve-3d');
         cssText.push('word-break:normal');
+        cssText.push('word-break:break-word'); // only in chrome, otherwise falls back to 'normal'
         cssText.push('white-space:nowrap');
       }
     }
