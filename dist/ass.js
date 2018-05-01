@@ -1484,10 +1484,10 @@
           // TODO: (tag.q === 0) and (tag.q === 3) are not implemented yet,
           // for now just handle it as (tag.q === 1)
           if (tag.q === 1 || tag.q === 0 || tag.q === 3) {
-            cssText += 'word-break:break-all;white-space:normal;';
+            cssText += 'word-break:break-all;word-break:break-word;white-space:normal;';
           }
           if (tag.q === 2) {
-            cssText += 'word-break:normal;white-space:nowrap;';
+            cssText += 'word-break:normal;word-break:break-word;white-space:nowrap;';
           }
         }
         var hasTransfrom = transformTags.some(function (x) { return (
@@ -1496,7 +1496,7 @@
         if (hasTransfrom) {
           cssText += (vendor.transform) + "transform:" + (createTransform(tag)) + ";";
           if (!drawing) {
-            cssText += 'transform-style:preserve-3d;word-break:normal;white-space:nowrap;';
+            cssText += 'transform-style:preserve-3d;word-break:normal;word-break:break-word;white-space:nowrap;';
           }
         }
         if (animationName) {
