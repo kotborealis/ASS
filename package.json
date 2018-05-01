@@ -1,7 +1,7 @@
 {
   "name": "ass.js",
   "description": "A JavaScript renderer for ASS subtitle format.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "dist/ass.js",
   "module": "dist/ass.esm.js",
   "files": [
