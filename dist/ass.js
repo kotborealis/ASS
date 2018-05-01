@@ -1,1510 +1,2027 @@
-;(function(root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define([], factory);
-  } else if (typeof exports === 'object') {
-    module.exports = factory();
-  } else {
-    root.ASS = factory();
-  }
-}(this, function() {
-'use strict';
+(function (global, factory) {
+  typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory() :
+  typeof define === 'function' && define.amd ? define(factory) :
+  (global.ASS = factory());
+}(this, (function () { 'use strict';
 
-function ASS() {
-  this.tree = {};
-  this.position = 0;
-  this.runline = [];
-  this.scale = 1;
-  this._resample = 'video_height';
-  this.resolution = {x: null, y: null};
-  this.container = document.createElement('div');
-  this.container.className = 'ASS-container';
-  this.container.appendChild($ffs);
-  this.container.appendChild($clipPath);
-  this.stage = document.createElement('div');
-  this.stage.className = 'ASS-stage ASS-animation-paused';
-}
-ASS.prototype.init = function(data, video, opt) {
-  if (!data || video.nodeName !== 'VIDEO') return;
-
-  var that = this;
-  if (!this.video) {
-    var isPlaying = !video.paused;
-    this.video = video;
-    this.video.parentNode.insertBefore(this.container, this.video);
-    this.container.appendChild(this.video);
-    this.container.appendChild(this.stage);
-    this.video.addEventListener('seeking', function() {that._seek();});
-    this.video.addEventListener('play', function() {that._play();});
-    this.video.addEventListener('pause', function() {that._pause();});
-    if (isPlaying && this.video.paused) this.video.play();
-  }
-
-  this.tree = parseASS(data);
-  if (!this.tree.ScriptInfo.PlayResX || !this.tree.ScriptInfo.PlayResY) {
-    this.tree.ScriptInfo.PlayResX = this.video.videoWidth;
-    this.tree.ScriptInfo.PlayResY = this.video.videoHeight;
-  }
-
-  if (opt && opt.resample) this._resample = opt.resample;
-
-  var $style = document.getElementById('ASS-style');
-  if (!$style) {
-    $style = document.createElement('style');
-    $style.type = 'text/css';
-    $style.id = 'ASS-style';
-    $style.appendChild(document.createTextNode(ASS_CSS));
-    document.head.appendChild($style);
-  }
-
-  this.resize();
-  return this;
-};
-ASS.prototype.resize = function() {
-  if (!this.video) return;
-  var cw = this.video.clientWidth,
-      ch = this.video.clientHeight,
-      vw = this.video.videoWidth,
-      vh = this.video.videoHeight,
-      sw = this.tree.ScriptInfo.PlayResX,
-      sh = this.tree.ScriptInfo.PlayResY,
-      videoScale = Math.min(cw / vw, ch / vh);
-  this.resolution.x = sw;
-  this.resolution.y = sh;
-  if (this.resample === 'video_width') {
-    this.resolution.y = sw / vw * vh;
-  }
-  if (this.resample === 'video_height') {
-    this.resolution.x = sh / vh * vw;
-  }
-  this.scale = Math.min(cw / this.resolution.x, ch / this.resolution.y);
-  if (this.resample === 'script_width') {
-    this.scale = videoScale * (vw / this.resolution.x);
-  }
-  if (this.resample === 'script_height') {
-    this.scale = videoScale * (vh / this.resolution.y);
-  }
-  this.width = this.scale * this.resolution.x;
-  this.height = this.scale * this.resolution.y;
-
-  var cssText = 'width:' + cw + 'px;height:' + ch + 'px;'
-  this.container.style.cssText = cssText;
-  cssText = 'width:' + this.width + 'px;' +
-            'height:' + this.height + 'px;' +
-            'top:' + (ch - this.height) / 2 + 'px;' +
-            'left:' + (cw - this.width) / 2 + 'px;';
-  this.stage.style.cssText = cssText;
-  $clipPath.style.cssText = cssText;
-  $clipPath.setAttributeNS(null, 'viewBox', [0, 0, sw, sh].join(' '));
-
-  createAnimation.call(this);
-  this._seek();
-  return this;
-};
-ASS.prototype.show = function() {
-  this.stage.style.visibility = 'visible';
-  return this;
-};
-ASS.prototype.hide = function() {
-  this.stage.style.visibility = 'hidden';
-  return this;
-};
-Object.defineProperty(ASS.prototype, 'resample', {
-  get: function() {
-    var r = this._resample;
-    if (r === 'video_width' ||
-        r === 'video_height' ||
-        r === 'script_width' ||
-        r === 'script_height') {
-      return r;
-    } else return 'video_height';
-  },
-  set: function(r) {
-    if (r === this._resample) return r;
-    if (r === 'video_width' ||
-        r === 'video_height' ||
-        r === 'script_width' ||
-        r === 'script_height') {
-      this._resample = r;
-      this.resize();
+  function parseEffect(text) {
+    var param = text
+      .toLowerCase()
+      .trim()
+      .split(/\s*;\s*/);
+    if (param[0] === 'banner') {
+      return {
+        name: param[0],
+        delay: param[1] * 1 || 0,
+        leftToRight: param[2] * 1 || 0,
+        fadeAwayWidth: param[3] * 1 || 0,
+      };
     }
-  }
-});
-ASS.prototype._play = function() {
-  var that = this;
-  var frame = function() {
-    that._launch();
-    RAFID = RAF(frame);
-  };
-  RAFID = RAF(frame);
-  this.stage.classList.remove('ASS-animation-paused');
-};
-ASS.prototype._pause = function() {
-  CAF(RAFID);
-  RAFID = 0;
-  this.stage.classList.add('ASS-animation-paused');
-};
-ASS.prototype._seek = function() {
-  var vct = this.video.currentTime,
-      dias = this.tree.Events.Dialogue;
-  while (this.stage.lastChild) {
-    this.stage.removeChild(this.stage.lastChild);
-  }
-  while ($clipPathDefs.lastChild) {
-    $clipPathDefs.removeChild($clipPathDefs.lastChild);
-  }
-  this.runline = [];
-  channel = [];
-  this.position = (function() {
-    var from = 0,
-        to = dias.length - 1;
-    while (from + 1 < to && vct > dias[(to + from) >> 1].End) {
-      from = (to + from) >> 1;
-    }
-    if (!from) return 0;
-    for (var i = from; i < to; ++i) {
-      if (dias[i].End > vct && vct >= dias[i].Start ||
-          i && dias[i - 1].End < vct && vct < dias[i].Start)
-        return i;
-    }
-    return to;
-  })();
-  this._launch();
-};
-ASS.prototype._launch = function() {
-  var vct = this.video.currentTime,
-      dias = this.tree.Events.Dialogue;
-  for (var i = this.runline.length - 1; i >= 0; --i) {
-    var dia = this.runline[i],
-        end = dia.End;
-    if (dia.Effect && /scroll/.test(dia.Effect.name)) {
-      var effDur = (dia.Effect.y2 - dia.Effect.y1) / (1000 / dia.Effect.delay);
-      end = Math.min(end, dia.Start + effDur);
-    }
-    if (end < vct) {
-      this.stage.removeChild(dia.node);
-      if (dia.clipPath) $clipPathDefs.removeChild(dia.clipPath);
-      this.runline.splice(i, 1);
-    }
-  }
-  while (this.position < dias.length && vct >= dias[this.position].Start) {
-    if (vct < dias[this.position].End) {
-      var dia = renderer.call(this, dias[this.position]);
-      this.runline.push(dia);
-    }
-    ++this.position;
-  }
-};
-
-var RAF = window.requestAnimationFrame ||
-          window.mozRequestAnimationFrame ||
-          window.webkitRequestAnimationFrame ||
-          function(cb) {return setTimeout(cb, 50 / 3);};
-var CAF = window.cancelAnimationFrame ||
-          window.mozCancelAnimationFrame ||
-          window.webkitCancelAnimationFrame ||
-          function(id) {clearTimeout(id);};
-var RAFID = 0;
-var channel = [];
-var xmlns = 'http://www.w3.org/2000/svg';
-var ASS_CSS = '.ASS-container{position:relative;overflow:hidden}.ASS-fix-font-size{position:absolute;visibility:hidden}.ASS-container video{position:absolute;top:0;left:0}.ASS-stage{overflow:hidden;z-index:2147483647;pointer-events:none;position:absolute}.ASS-dialogue{font-size:0;position:absolute}.ASS-fix-objectBoundingBox{width:100%;height:100%;position:absolute;top:0;left:0}.ASS-animation-paused *{-webkit-animation-play-state:paused!important;animation-play-state:paused!important}';
-
-var generateUUID = function() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0,
-        v = (c === 'x' ? r : (r & 0x3 | 0x8));
-    return v.toString(16);
-  });
-};
-
-var parseASS = function(data) {
-  data = data.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  var tree = {
-    ScriptInfo: {
-      'Title': '&lt;untitled&gt;',
-      'Original Script': '&lt;unknown&gt;'
-    },
-    V4Styles: {Format: {}, Style: {}},
-    Events: {Format: {}, Dialogue: []}
-  };
-  var lines = data.split(/\r?\n/),
-      state = 0;
-  for (var len = lines.length, i = 0; i < len; ++i) {
-    var line = lines[i].replace(/^\s+|\s+$/g, '');
-    if (/^;/.test(line)) continue;
-
-    if (/^\[Script Info\]/i.test(line)) state = 1;
-    else if (/^\[V4\+ Styles\]/i.test(line)) state = 2;
-    else if (/^\[Events\]/i.test(line)) state = 3;
-    else if (/^\[.*\]/.test(line)) state = 0;
-
-    if (state === 0) continue;
-    if (state === 1) {
-      if (/:/.test(line)) {
-        var kv = line.match(/(.*?)\s*:\s*(.*)/);
-        if (!isNaN(kv[2] * 1)) kv[2] *= 1;
-        tree.ScriptInfo[kv[1]] = kv[2];
-      }
-    }
-    if (state === 2) {
-      if (/^Format:/.test(line)) {
-        tree.V4Styles.Format = parseFormat(line);
-      }
-      if (/^Style:/.test(line)) {
-        var s = parseStyle(line, tree);
-        tree.V4Styles.Style[s.Name] = s;
-      }
-    }
-    if (state === 3) {
-      if (/^Format:/.test(line)) {
-        tree.Events.Format = parseFormat(line);
-      }
-      if (/^Dialogue:/.test(line)) {
-        var dia = parseDialogue(line, tree);
-        if (dia.Start < dia.End) {
-          dia._index = tree.Events.Dialogue.length;
-          tree.Events.Dialogue.push(dia);
-        }
-      }
-    }
-  }
-  tree.Events.Dialogue.sort(function(a, b) {
-    return (a.Start - b.Start) || (a.End - b.End) || (a._index - b._index);
-  });
-
-  return tree;
-};
-
-var parseDialogue = function(data, tree) {
-  var fields = data.match(/Dialogue:(.*)/)[1].split(',');
-  var len = tree.Events.Format.length;
-  if (fields.length > len) {
-    var textField = fields.slice(len - 1).join();
-    fields = fields.slice(0, len - 1);
-    fields.push(textField);
-  }
-
-  var timer = (tree.ScriptInfo['Timer'] / 100) || 1;
-  var dia = {};
-  for (var i = 0; i < len; ++i) {
-    dia[tree.Events.Format[i]] = fields[i].replace(/^\s+/, '');
-  }
-  dia.Layer *= 1;
-  dia.Start = parseTime(dia.Start) / timer;
-  dia.End = parseTime(dia.End) / timer;
-  dia.Style = tree.V4Styles.Style[dia.Style] ? dia.Style : 'Default';
-  dia.MarginL *= 1;
-  dia.MarginR *= 1;
-  dia.MarginV *= 1;
-  dia.Effect = parseEffect(dia.Effect);
-  dia._parsedText = parseTags(dia, tree.V4Styles.Style);
-
-  return dia;
-};
-
-var parseDrawing = function(text) {
-  text = text.replace(/([mnlbspc])/gi, ' $1 ')
-             .replace(/^\s*|\s*$/g, '')
-             .replace(/\s+/g, ' ')
-             .toLowerCase();
-  var rawCommands = text.split(/\s(?=[mnlbspc])/),
-      commands = [];
-  var s2b = function(ps, prevType, nextType) {
-    // D3.js, d3_svg_lineBasisOpen()
-    var bb1 = [0, 2/3, 1/3, 0],
-        bb2 = [0, 1/3, 2/3, 0],
-        bb3 = [0, 1/6, 2/3, 1/6];
-    var dot4 = function(a, b) {
-      return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-    };
-    var px = [ps[ps.length - 1].x, ps[0].x, ps[1].x, ps[2].x],
-        py = [ps[ps.length - 1].y, ps[0].y, ps[1].y, ps[2].y];
-    var path = ['L', new Point(dot4(bb3, px), dot4(bb3, py))];
-    if (prevType === 'M') path[0] = 'M';
-    for (var i = 3; i < ps.length; i++) {
-      px = [ps[i - 3].x, ps[i - 2].x, ps[i - 1].x, ps[i].x];
-      py = [ps[i - 3].y, ps[i - 2].y, ps[i - 1].y, ps[i].y];
-      path.push('C' + new Point(dot4(bb1, px), dot4(bb1, py)),
-                ',' + new Point(dot4(bb2, px), dot4(bb2, py)),
-                ',' + new Point(dot4(bb3, px), dot4(bb3, py)));
-    }
-    if (nextType === 'L' || nextType === 'C') {
-      path.push('L', ps[ps.length - 1]);
-    }
-    return path.join('');
-  };
-  function Point(x, y) {
-    this.x = x;
-    this.y = y;
-    this.toString = function() {
-      return this.x + ',' + this.y;
-    };
-  }
-  function DrawingCommand(type) {
-    this.points = [];
-    this.type = null;
-    this.prevType = null;
-    this.nextType = null;
-    if (/m/.test(type)) this.type = 'M';
-    if (/n|l/.test(type)) this.type = 'L';
-    if (/b/.test(type)) this.type = 'C';
-    if (/s/.test(type)) this.type = '_S';
-    this.isValid = function() {
-      if (!this.points.length || !this.type) return false;
-      if (/C|S/.test(this.type) && this.points.length < 3) return false;
-      return true;
-    };
-    this.toString = function() {
-      if (this.type === '_S') {
-        return s2b(this.points, this.prevType, this.nextType);
-      }
-      return this.type + this.points.join();
-    };
-  }
-
-  var i = 0;
-  while (i < rawCommands.length) {
-    var p = rawCommands[i].split(' '),
-        command = new DrawingCommand(p[0]);
-    for (var lenj = p.length - !(p.length & 1), j = 1; j < lenj; j += 2) {
-      command.points.push(new Point(p[j], p[j + 1]));
-    }
-    if (/p|c/.test(p[0])) {
-      if (commands[i - 1].type === '_S') {
-        if (p[0] === 'p') {
-          var prev = commands[i - 1].points.concat(command.points);
-          commands[i - 1].points = prev;
-        }
-        if (p[0] === 'c') {
-          var ps = commands[i - 1].points;
-          commands[i - 1].points.push(new Point(ps[0].x, ps[0].y),
-                                      new Point(ps[1].x, ps[1].y),
-                                      new Point(ps[2].x, ps[2].y));
-        }
-      }
-      rawCommands.splice(i, 1);
-    } else {
-      if (p[0] === 's') {
-        var prev = commands[i - 1].points[commands[i - 1].points.length - 1];
-        command.points.unshift(new Point(prev.x, prev.y));
-      }
-      if (command.isValid()) {
-        if (i) {
-          command.prevType = commands[i - 1].type;
-          commands[i - 1].nextType = command.type;
-        }
-        commands.push(command);
-      }
-      i++;
-    }
-  }
-
-  return commands;
-};
-
-var parseEffect = function(text) {
-  var param = text.toLowerCase().split(';');
-  if (param[0] === 'banner') {
-    return {
-      name: param[0],
-      delay: param[1] * 1 || 1,
-      lefttoright: param[2] * 1 || 0,
-      fadeawaywidth: param[3] * 1 || 0,
-    };
-  }
-  if (/^scroll\s/.test(param[0])) {
-    return {
-      name: param[0],
-      y1: Math.min(param[1], param[2]),
-      y2: Math.max(param[1], param[2]),
-      delay: param[3] * 1 || 1,
-      fadeawayheight: param[4] * 1 || 0,
-    };
-  }
-  return null;
-};
-
-var parseFormat = function(data) {
-  return data.match(/Format:(.*)/)[1].replace(/\s/g, '').split(',');
-};
-
-var parseStyle = function(data, tree) {
-  var fields = data.match(/Style:(.*)/)[1].split(','),
-      s = {};
-  for (var i = fields.length - 1; i >= 0; --i) {
-    var field = tree.V4Styles.Format[i];
-    s[field] = fields[i].replace(/^\s*/, '');
-    if (!isNaN(s[field] * 1)) s[field] *= 1;
-  }
-  s._tags = {
-    fn: s.Fontname,
-    fs: s.Fontsize,
-    c1: s.PrimaryColour.match(/&H(\w\w)?(\w{6})&?/)[2],
-    a1: s.PrimaryColour.match(/&H(\w\w)?(\w{6})&?/)[1] || '00',
-    c2: s.SecondaryColour.match(/&H(\w\w)?(\w{6})&?/)[2],
-    a2: s.SecondaryColour.match(/&H(\w\w)?(\w{6})&?/)[1] || '00',
-    c3: s.OutlineColour.match(/&H(\w\w)?(\w{6})&?/)[2],
-    a3: s.OutlineColour.match(/&H(\w\w)?(\w{6})&?/)[1] || '00',
-    c4: s.BackColour.match(/&H(\w\w)?(\w{6})&?/)[2],
-    a4: s.BackColour.match(/&H(\w\w)?(\w{6})&?/)[1] || '00',
-    b: Math.abs(s.Bold),
-    i: Math.abs(s.Italic),
-    u: Math.abs(s.Underline),
-    s: Math.abs(s.StrikeOut),
-    q: tree.ScriptInfo.WrapStyle || 1,
-    fscx: s.ScaleX,
-    fscy: s.ScaleY,
-    fsp: s.Spacing,
-    frz: s.Angle,
-    xbord: s.Outline,
-    ybord: s.Outline,
-    xshad: s.Shadow,
-    yshad: s.Shadow,
-  };
-  return s;
-};
-
-var parseTags = function(dialogue, styles) {
-  var text = dialogue.Text.replace(/\\N/g, '<br>').replace(/\\h/g, '&nbsp;'),
-      prevTags = JSON.parse(JSON.stringify(styles[dialogue.Style]._tags)),
-      kv = text.split(/{([^{}]*?)}/),
-      dia = {content: []};
-  if (kv[0].length) {
-    dia.content.push({
-      text: kv[0],
-      tags: prevTags
-    });
-  }
-  for (var i = 1; i < kv.length; i += 2) {
-    var ct = {
-      text: kv[i + 1],
-      tags: JSON.parse(JSON.stringify(prevTags))
-    };
-
-    /* JavaScript doesn't support split(/(?<!\(.*?)\\(?!.*?\))/) */
-    var cmds = kv[i].split('\\');
-    for (var j = 0; j < cmds.length; ++j) {
-      if (/^t\(/.test(cmds[j]) && !/\)$/.test(cmds[j])) {
-        while (!/\)$/.test(cmds[j + 1])) {
-          cmds[j] += '\\' + cmds[j + 1];
-          cmds.splice(j + 1, 1);
-        }
-        cmds[j] += '\\' + cmds[j + 1];
-        cmds.splice(j + 1, 1);
-      }
-    }
-
-    for (var j = 0; j < cmds.length; ++j) {
-      var cmd = cmds[j];
-      parseAnimatableTags.call(ct, cmd);
-      if (ct.tags.clip) dia.clip = ct.tags.clip;
-      if (/^b\d/.test(cmd)) ct.tags.b = cmd.match(/^b(\d+)/)[1] * 1;
-      if (/^i\d/.test(cmd)) ct.tags.i = cmd[1] * 1;
-      if (/^u\d/.test(cmd)) ct.tags.u = cmd[1] * 1;
-      if (/^s\d/.test(cmd)) ct.tags.s = cmd[1] * 1;
-      if (/^fn/.test(cmd)) ct.tags.fn = cmd.match(/^fn(.*)/)[1];
-      if (/^fe/.test(cmd)) ct.tags.fe = cmd.match(/^fe(.*)/)[1] * 1;
-      if (/^k\d/.test(cmd)) ct.tags.k = cmd.match(/^k(\d+)/)[1] * 1;
-      if (/^K\d/.test(cmd)) ct.tags.kf = cmd.match(/^K(\d+)/)[1] * 1;
-      if (/^kf\d/.test(cmd)) ct.tags.kf = cmd.match(/^kf(\d+)/)[1] * 1;
-      if (/^ko\d/.test(cmd)) ct.tags.ko = cmd.match(/^ko(\d+)/)[1] * 1;
-      if (/^kt\d/.test(cmd)) ct.tags.kt = cmd.match(/^kt(\d+)/)[1] * 1;
-      if (/^q\d/.test(cmd)) ct.tags.q = cmd[1] * 1;
-      if (/^p\d/.test(cmd)) ct.tags.p = cmd.match(/^p(\d+)/)[1] * 1;
-      if (/^pbo/.test(cmd)) ct.tags.pbo = cmd.match(/^pbo(.*)/)[1] * 1;
-      if (/^an\d/.test(cmd) && !dia.alignment) dia.alignment = cmd[2] * 1;
-      if (/^a\d/.test(cmd) && !dia.alignment) {
-        var val = cmd.match(/^a(\d+)/)[1] * 1;
-        if (val < 4) dia.alignment = val;
-        else if (val > 8) dia.alignment = val - 5;
-        else dia.alignment = val + 2;
-      }
-      if (/^pos/.test(cmd) && !dia.pos && !dia.move) {
-        var p = cmd.replace(/\s/g, '').match(/^pos\((.*?)\)?$/)[1].split(',');
-        dia.pos = {x: p[0] * 1, y: p[1] * 1};
-      }
-      if (/^org/.test(cmd) && !dia.org) {
-        var p = cmd.replace(/\s/g, '').match(/^org\((.*?)\)?$/)[1].split(',');
-        dia.org = {x: p[0] * 1, y: p[1] * 1};
-      }
-      if (/^move/.test(cmd) && !dia.move && !dia.pos) {
-        var p = cmd.replace(/\s/g, '')
-                   .match(/^move\((.*?)\)?$/)[1]
-                   .split(',')
-                   .map(function(x) { return x * 1; });
-        dia.pos = {x: p[0] * 1, y: p[1] * 1};
-        if (p.length === 4) {
-          p.push(0);
-          p.push((dialogue.End - dialogue.Start) * 1000);
-        }
-        dia.move = p;
-      }
-      if (/^fad\s*\(/.test(cmd) && !dia.fad) {
-        dia.fad = cmd.replace(/\s/g, '')
-                     .match(/^fad\((.*?)\)?$/)[1]
-                     .split(',')
-                     .map(function(x) { return x * 1; });
-      }
-      if (/^fade/.test(cmd) && !dia.fade) {
-        dia.fade = cmd.replace(/\s/g, '')
-                      .match(/^fade\((.*?)\)?$/)[1]
-                      .split(',')
-                      .map(function(x) { return x * 1; });
-      }
-      if (/^r/.test(cmd)) {
-        var name = cmd.match(/^r(.*)/)[1];
-        var rStyle = styles[name] || styles[dialogue.Style];
-        ct.tags = JSON.parse(JSON.stringify(rStyle._tags));
-      }
-      if (/^t\(/.test(cmd)) {
-        var args = cmd.replace(/\s/g, '').match(/^t\((.*)\)/)[1].split(',');
-        if (!args[0]) continue;
-        var tcmds = args[args.length - 1].split('\\');
-        var tct = {
-          t1: 0,
-          t2: (dialogue.End - dialogue.Start) * 1000,
-          accel: 1,
-          tags: {}
-        };
-        for (var k = tcmds.length - 1; k >= 0; k--) {
-          parseAnimatableTags.call(tct, tcmds[k]);
-        }
-        if (args.length === 2) {
-          tct.accel = args[0] * 1;
-        }
-        if (args.length === 3) {
-          tct.t1 = args[0] * 1;
-          tct.t2 = args[1] * 1;
-        }
-        if (args.length === 4) {
-          tct.t1 = args[0] * 1;
-          tct.t2 = args[1] * 1;
-          tct.accel = args[2] * 1;
-        }
-        if (!ct.tags.t) ct.tags.t = [];
-        ct.tags.t.push(tct);
-      }
-    }
-    if (ct.tags.t) {
-      for (var j = 0; j < ct.tags.t.length - 1; ++j) {
-        for (var k = j + 1; k < ct.tags.t.length; ++k) {
-          if (ct.tags.t[j].t1 === ct.tags.t[k].t1 &&
-              ct.tags.t[j].t2 === ct.tags.t[k].t2) {
-            for (var l in ct.tags.t[k].tags) {
-              ct.tags.t[j].tags[l] = ct.tags.t[k].tags[l];
-            }
-            ct.tags.t.splice(k, 1);
-          }
-        }
-      }
-    }
-    if (dialogue.Effect && dialogue.Effect.name === 'banner') ct.tags.q = 2;
-    if (!ct.tags.p) ct.text = ct.text.replace(/\s/g, '&nbsp;');
-    else ct.commands = parseDrawing(ct.text);
-    ct.text = ct.text.replace(/\\n/g, (ct.tags.q === 2) ? '<br>' : '&nbsp;');
-    prevTags = ct.tags;
-    dia.content.push(ct);
-  }
-  return dia;
-};
-var parseAnimatableTags = function(cmd) {
-  if (/^fs[\d\+\-]/.test(cmd)) {
-    var val = cmd.match(/^fs(.*)/)[1];
-    if (/^\d/.test(val)) this.tags.fs = val * 1;
-    if (/^\+|-/.test(val)) {
-      this.tags.fs *= (val * 1 > -10 ? (1 + val / 10) : 1);
-    }
-  }
-  if (/^fsp/.test(cmd)) this.tags.fsp = cmd.match(/^fsp(.*)/)[1] * 1;
-  if (/^fscx/.test(cmd)) this.tags.fscx = cmd.match(/^fscx(.*)/)[1] * 1;
-  if (/^fscy/.test(cmd)) this.tags.fscy = cmd.match(/^fscy(.*)/)[1] * 1;
-  if (/^fsp/.test(cmd)) this.tags.fsp = cmd.match(/^fsp(.*)/)[1] * 1;
-  if (/^frx/.test(cmd)) this.tags.frx = cmd.match(/^frx(.*)/)[1] * 1;
-  if (/^fry/.test(cmd)) this.tags.fry = cmd.match(/^fry(.*)/)[1] * 1;
-  if (/^fr[z\d\-]/.test(cmd)) this.tags.frz = cmd.match(/^frz?(.*)/)[1] * 1;
-  if (/^blur\d/.test(cmd)) this.tags.blur = cmd.match(/^blur(.*)/)[1] * 1;
-  if (/^be\d/.test(cmd)) this.tags.blur = cmd.match(/^be(.*)/)[1] * 1;
-  if (this.tags.blur < 0) this.tags.blur = 0;
-  if (/^fax/.test(cmd)) this.tags.fax = cmd.match(/^fax(.*)/)[1] * 1;
-  if (/^fay/.test(cmd)) this.tags.fay = cmd.match(/^fay(.*)/)[1] * 1;
-  if (/^x*bord/.test(cmd)) this.tags.xbord = cmd.match(/^x*bord(.*)/)[1] * 1;
-  if (/^y*bord/.test(cmd)) this.tags.ybord = cmd.match(/^y*bord(.*)/)[1] * 1;
-  if (this.tags.xbord < 0) this.tags.xbord = 0;
-  if (this.tags.ybord < 0) this.tags.ybord = 0;
-  if (/^x*shad/.test(cmd)) this.tags.xshad = cmd.match(/^x*shad(.*)/)[1] * 1;
-  if (/^y*shad/.test(cmd)) this.tags.yshad = cmd.match(/^y*shad(.*)/)[1] * 1;
-  if (/^\d?c&?H?[0-9a-f]+/i.test(cmd)) {
-    var args = cmd.match(/^(\d?)c&?H?(\w+)/);
-    if (!args[1]) args[1] = '1';
-    while (args[2].length < 6) args[2] = '0' + args[2];
-    this.tags['c' + args[1]] = args[2];
-  }
-  if (/^\da&?H?[0-9a-f]+/i.test(cmd)) {
-    var args = cmd.match(/^(\d)a&?H?(\w\w)/);
-    this.tags['a' + args[1]] = args[2];
-  }
-  if (/^alpha&?H?[0-9a-f]+/i.test(cmd)) {
-    for (var i = 1; i <= 4; i++) {
-      this.tags['a' + i] = cmd.match(/^alpha&?H?(\w\w)/)[1];
-    }
-  }
-  if (/^i?clip/.test(cmd)) {
-    var p = cmd.match(/^i?clip\s*\((.*)\)/)[1].split(/\s*,\s*/);
-    this.tags.clip = {
-      inverse: /iclip/.test(cmd),
-      scale: 1,
-      commands: null,
-      dots: null,
-    };
-    if (p.length === 1) {
-      this.tags.clip.commands = parseDrawing(p[0]);
-    }
-    if (p.length === 2) {
-      this.tags.clip.scale = p[0] * 1;
-      this.tags.clip.commands = parseDrawing(p[1]);
-    }
-    if (p.length === 4) {
-      this.tags.clip.dots = [p[0] * 1, p[1] * 1, p[2] * 1, p[3] * 1];
-    }
-  }
-};
-
-var parseTime = function(time) {
-  var t = time.split(':');
-  return t[0] * 3600 + t[1] * 60 + t[2] * 1;
-};
-
-var renderer = function(dialogue) {
-  var pt = dialogue._parsedText,
-      s = this.tree.V4Styles.Style[dialogue.Style];
-  var dia = {
-    node: document.createElement('div'),
-    Alignment: pt.alignment || s.Alignment,
-    Layer: dialogue.Layer,
-    Start: dialogue.Start,
-    End: dialogue.End,
-    BorderStyle: s.BorderStyle,
-    MarginL: dialogue.MarginL || s.MarginL,
-    MarginR: dialogue.MarginR || s.MarginR,
-    MarginV: dialogue.MarginV || s.MarginV,
-    Effect: dialogue.Effect,
-    parsedText: pt,
-    animationName: pt.animationName,
-    move: pt.move,
-    fad: pt.fad,
-    fade: pt.fade,
-    pos: pt.pos || (pt.move ? {x: 0, y: 0} : null),
-    org: pt.org,
-    clip: pt.clip,
-    channel: 0,
-    t: false,
-  };
-  dia.node.className = 'ASS-dialogue';
-
-  setTagsStyle.call(this, dia);
-  this.stage.appendChild(dia.node);
-
-  var bcr = dia.node.getBoundingClientRect();
-  dia.width = bcr.width;
-  dia.height = bcr.height;
-
-  setDialoguePosition.call(this, dia);
-  setDialogueStyle.call(this, dia);
-  setTransformOrigin(dia);
-  setClipPath.call(this, dia);
-
-  return dia;
-};
-var setTagsStyle = function(dia) {
-  var df = document.createDocumentFragment();
-  for (var len = dia.parsedText.content.length, i = 0; i < len; ++i) {
-    var ct = dia.parsedText.content[i];
-    if (!ct.text) continue;
-    var t = ct.tags,
-        cssText = ['display:inline-block'],
-        vct = this.video.currentTime;
-    if (!t.p) {
-      cssText.push('font-family:\'' + t.fn + '\',Arial');
-      var rfs = this.scale * getRealFontSize(t.fs, t.fn);
-      cssText.push('font-size:' + rfs + 'px');
-      cssText.push('color:' + toRGBA(t.a1 + t.c1));
-      var sisbas = this.tree.ScriptInfo['ScaledBorderAndShadow'],
-          sbas = /Yes/i.test(sisbas) ? this.scale : 1;
-      if (dia.BorderStyle === 1) {
-        cssText.push('text-shadow:' + createCSSBS(t, sbas));
-      }
-      if (dia.BorderStyle === 3) {
-        cssText.push('background-color:' + toRGBA(t.a3 + t.c3));
-        cssText.push('box-shadow:' + createCSSBS(t, sbas));
-      }
-      if (t.b === 0) cssText.push('font-weight:normal');
-      else if (t.b === 1) cssText.push('font-weight:bold');
-      else cssText.push('font-weight:' + t.b);
-      cssText.push('font-style:' + (t.i ? 'italic' : 'normal'));
-      if (t.u && t.s) cssText.push('text-decoration:underline line-through');
-      else if (t.u) cssText.push('text-decoration:underline');
-      else if (t.s) cssText.push('text-decoration:line-through');
-      cssText.push('letter-spacing:' + this.scale * t.fsp + 'px');
-      if (t.q === 0) {} // TODO
-      if (t.q === 1) {
-        cssText.push('word-break:break-all');
-        cssText.push('word-break:break-word'); // chrome has non-standard value "break-word", which is the fanciest one
-        // firefox has no implementation for this value, so it will fallback to ugly break-all
-
-        cssText.push('white-space:normal');
-      }
-      if (t.q === 2) {
-        cssText.push('word-break:normal');
-        cssText.push('word-break:break-word'); // only in chrome, otherwise falls back to 'normal'
-        cssText.push('white-space:nowrap');
-      }
-      if (t.q === 3) {} // TODO
-    }
-    if (t.fax || t.fay ||
-        t.frx || t.fry || t.frz ||
-        t.fscx !== 100 || t.fscy !== 100) {
-      var tf = createTransform(t);
-      ['', '-webkit-'].forEach(function(v) {
-        cssText.push(v + 'transform:' + tf);
-      });
-      if (!t.p) {
-        cssText.push('transform-style:preserve-3d');
-        cssText.push('word-break:normal');
-        cssText.push('word-break:break-word'); // only in chrome, otherwise falls back to 'normal'
-        cssText.push('white-space:nowrap');
-      }
-    }
-    if (t.t) {
-      ['', '-webkit-'].forEach(function(v) {
-        var delay = Math.min(0, dia.Start - vct);
-        cssText.push(v + 'animation-name:' + ct.animationName);
-        cssText.push(v + 'animation-duration:' + (dia.End - dia.Start) + 's');
-        cssText.push(v + 'animation-delay:' + delay + 's');
-        cssText.push(v + 'animation-timing-function:linear');
-        cssText.push(v + 'animation-iteration-count:1');
-        cssText.push(v + 'animation-fill-mode:forwards');
-      });
-      dia.t = true;
-    }
-
-    dia.hasRotate = /"fr[xyz]":[^0]/.test(JSON.stringify(t));
-    var parts = ct.text.split('<br>');
-    for (var lenj = parts.length, j = 0; j < lenj; j++) {
-      if (j) df.appendChild(document.createElement('br'));
-      if (!parts[j]) continue;
-      var cn = document.createElement('span');
-      cn.dataset.hasRotate = dia.hasRotate;
-      if (t.p) {
-        cn.appendChild(createDrawing.call(this, cn, ct, dia));
-        if (t.pbo) {
-          var pbo = this.scale * -t.pbo * (t.fscy || 100) / 100;
-          cssText.push('vertical-align:' + pbo + 'px');
-        }
-      } else cn.innerHTML = parts[j];
-      cn.style.cssText += cssText.join(';');
-      df.appendChild(cn);
-    }
-  }
-  dia.node.appendChild(df);
-};
-var setDialoguePosition = function(dia) {
-  if (dia.Effect) {
-    if (dia.Effect.name === 'banner') {
-      if (dia.Alignment <= 3) dia.y = this.height - dia.height - dia.MarginV;
-      if (dia.Alignment >= 4 && dia.Alignment <= 6) {
-        dia.y = (this.height - dia.height) / 2;
-      }
-      if (dia.Alignment >= 7) dia.y = dia.MarginV;
-      if (dia.Effect.lefttoright) dia.x = -dia.width;
-      else dia.x = this.width;
-    }
-    if (/^scroll/.test(dia.Effect.name)) {
-      dia.y = /up/.test(dia.Effect.name) ? this.height : -dia.height;
-      if (dia.Alignment % 3 === 1) dia.x = 0;
-      if (dia.Alignment % 3 === 2) dia.x = (this.width - dia.width) / 2;
-      if (dia.Alignment % 3 === 0) dia.x = this.width - dia.width;
-    }
-  } else {
-    if (dia.pos) {
-      if (dia.Alignment % 3 === 1) dia.x = this.scale * dia.pos.x;
-      if (dia.Alignment % 3 === 2) {
-        dia.x = this.scale * dia.pos.x - dia.width / 2;
-      }
-      if (dia.Alignment % 3 === 0) dia.x = this.scale * dia.pos.x - dia.width;
-      if (dia.Alignment <= 3) dia.y = this.scale * dia.pos.y - dia.height;
-      if (dia.Alignment >= 4 && dia.Alignment <= 6) {
-        dia.y = this.scale * dia.pos.y - dia.height / 2;
-      }
-      if (dia.Alignment >= 7) dia.y = this.scale * dia.pos.y;
-    } else {
-      if (dia.Alignment % 3 === 1) dia.x = 0;
-      if (dia.Alignment % 3 === 2) dia.x = (this.width - dia.width) / 2;
-      if (dia.Alignment % 3 === 0) {
-        dia.x = this.width - dia.width - this.scale * dia.MarginR;
-      }
-      if (dia.t) {
-        if (dia.Alignment <= 3) dia.y = this.height - dia.height - dia.MarginV;
-        if (dia.Alignment >= 4 && dia.Alignment <= 6) {
-          dia.y = (this.height - dia.height) / 2;
-        }
-        if (dia.Alignment >= 7) dia.y = dia.MarginV;
-      } else dia.y = getChannel.call(this, dia);
-    }
-  }
-};
-var setDialogueStyle = function(dia) {
-  var cssText = [],
-      vct = this.video.currentTime;
-  if (dia.Layer) cssText.push('z-index:' + dia.Layer);
-  if (dia.move || dia.fad || dia.fade || dia.Effect) {
-    ['', '-webkit-'].forEach(function(v) {
-      cssText.push(v + 'animation-name:' + dia.animationName);
-      cssText.push(v + 'animation-duration:' + (dia.End - dia.Start) + 's');
-      cssText.push(v + 'animation-delay:' + Math.min(0, dia.Start - vct) + 's');
-      cssText.push(v + 'animation-timing-function:linear');
-      cssText.push(v + 'animation-iteration-count:1');
-      cssText.push(v + 'animation-fill-mode:forwards');
-    });
-  }
-  if (dia.Alignment % 3 === 1) cssText.push('text-align:left');
-  if (dia.Alignment % 3 === 2) cssText.push('text-align:center');
-  if (dia.Alignment % 3 === 0) cssText.push('text-align:right');
-  if (!dia.Effect) {
-    var mw = this.width - this.scale * (dia.MarginL + dia.MarginR);
-    cssText.push('max-width:' + mw + 'px');
-    if (!dia.pos) {
-      if (dia.Alignment % 3 === 1) {
-        cssText.push('margin-left:' + this.scale * dia.MarginL + 'px');
-      }
-      if (dia.Alignment % 3 === 0) {
-        cssText.push('margin-right:' + this.scale * dia.MarginR + 'px');
-      }
-      if (dia.width > this.width - this.scale * (dia.MarginL + dia.MarginR)) {
-        cssText.push('margin-left:' + this.scale * dia.MarginL + 'px');
-        cssText.push('margin-right:' + this.scale * dia.MarginR + 'px');
-      }
-    }
-  }
-  cssText.push('width:' + dia.width + 'px');
-  cssText.push('height:' + dia.height + 'px');
-  cssText.push('left:' + dia.x + 'px');
-  cssText.push('top:' + dia.y + 'px');
-  dia.node.style.cssText = cssText.join(';');
-};
-var setTransformOrigin = function(dia) {
-  if (!dia.hasRotate) return;
-  if (!dia.org) {
-    dia.org = {x: 0, y: 0};
-    if (dia.Alignment % 3 === 1) dia.org.x = dia.x;
-    if (dia.Alignment % 3 === 2) dia.org.x = dia.x + dia.width / 2;
-    if (dia.Alignment % 3 === 0) dia.org.x = dia.x + dia.width;
-    if (dia.Alignment <= 3) dia.org.y = dia.y + dia.height;
-    if (dia.Alignment >= 4 && dia.Alignment <= 6) {
-      dia.org.y = dia.y + dia.height / 2;
-    }
-    if (dia.Alignment >= 7) dia.org.y = dia.y;
-  }
-  var children = dia.node.childNodes;
-  for (var i = children.length - 1; i >= 0; i--) {
-    if (children[i].dataset.hasRotate) {
-      // It's not extremely precise for offsets are round the value to an integer.
-      var tox = dia.org.x - dia.x - children[i].offsetLeft,
-          toy = dia.org.y - dia.y - children[i].offsetTop,
-          to = 'transform-origin:' + tox + 'px ' + toy + 'px;';
-      children[i].style.cssText += '-webkit-' + to + to;
-    }
-  }
-};
-var setClipPath = function(dia) {
-  if (dia.clip) {
-    var fobb = document.createElement('div');
-    this.stage.insertBefore(fobb, dia.node);
-    fobb.appendChild(dia.node);
-    dia.node = fobb;
-    fobb.className = 'ASS-fix-objectBoundingBox';
-    fobb.style.cssText += createClipPath.call(this, dia);
-  }
-};
-
-var $animation = document.createElement('style');
-$animation.type = 'text/css';
-$animation.className = 'ASS-animation';
-document.head.appendChild($animation);
-var createAnimation = function() {
-  function KeyFrames() {
-    this.obj = {};
-    this.set = function(percentage, property, value) {
-      if (!this.obj[percentage]) this.obj[percentage] = {};
-      this.obj[percentage][property] = value;
-    };
-    this.toString = function() {
-      var arr = ['{'];
-      for (var percentage in this.obj) {
-        arr.push(percentage + '{');
-        for (var property in this.obj[percentage]) {
-          var rule = property + ':' + this.obj[percentage][property] + ';';
-          if (property === 'transform') arr.push('-webkit-' + rule);
-          arr.push(rule);
-        }
-        arr.push('}');
-      }
-      arr.push('}\n');
-      return arr.join('');
-    };
-  }
-  var kfObj = {};
-  var getName = function(str) {
-    for (var name in kfObj) {
-      if (kfObj[name] === str) return name;
+    if (/^scroll\s/.test(param[0])) {
+      return {
+        name: param[0],
+        y1: Math.min(param[1] * 1, param[2] * 1),
+        y2: Math.max(param[1] * 1, param[2] * 1),
+        delay: param[3] * 1 || 0,
+        fadeAwayHeight: param[4] * 1 || 0,
+      };
     }
     return null;
-  };
-  for (var i = this.tree.Events.Dialogue.length - 1; i >= 0; i--) {
-    var dia = this.tree.Events.Dialogue[i],
-        pt = dia._parsedText,
-        dur = (dia.End - dia.Start) * 1000,
-        kf = new KeyFrames(),
-        kfStr = '',
-        t = [];
-    if (dia.Effect && !pt.move) {
-      var eff = dia.Effect;
-      if (eff.name === 'banner') {
-        var tx = this.scale * (dur / eff.delay) * (eff.lefttoright ? 1 : -1);
-        kf.set('0.000%', 'transform', 'translateX(0)');
-        kf.set('100.000%', 'transform', 'translateX(' + tx + 'px)');
-      }
-      if (/^scroll/.test(eff.name)) {
-        var updown = /up/.test(eff.name) ? -1 : 1,
-            y1 = eff.y1,
-            y2 = eff.y2 || this.resolution.y,
-            tFrom = 'translateY(' + this.scale * y1 * updown + 'px)',
-            tTo = 'translateY(' + this.scale * y2 * updown + 'px)',
-            dp = (y2 - y1) / (dur / eff.delay) * 100;
-        t[1] = Math.min(100, dp).toFixed(3) + '%';
-        kf.set('0.000%', 'transform', tFrom);
-        kf.set(t[1], 'transform', tTo);
-        kf.set('100.000%', 'transform', tTo);
-      }
-    }
-    if (!pt.fad && pt.fade && pt.fade.length === 2) pt.fad = pt.fade;
-    if (pt.fad && pt.fad.length === 2) {
-      t[0] = '0.000%';
-      t[1] = Math.min(100, pt.fad[0] / dur * 100).toFixed(3) + '%';
-      t[2] = Math.max(0, (dur - pt.fad[1]) / dur * 100).toFixed(3) + '%';
-      t[3] = '100.000%';
-      kf.set(t[0], 'opacity', 0);
-      kf.set(t[1], 'opacity', 1);
-      kf.set(t[2], 'opacity', 1);
-      kf.set(t[3], 'opacity', 0);
-    }
-    if (pt.fade && pt.fade.length === 7) {
-      t[0] = '0.000%';
-      t[5] = '100.000%';
-      for (var j = 1; j <= 4; j++) {
-        t[j] = Math.min(100, pt.fade[j + 2] / dur * 100).toFixed(3) + '%';
-      }
-      for (var j = 0; j <= 5; j++) {
-        kf.set(t[j], 'opacity', 1 - pt.fade[j >> 1] / 255);
-      }
-    }
-    if (pt.move && pt.move.length === 6) {
-      if (!pt.pos) pt.pos = {x: 0, y: 0};
-      if (pt.move.length === 6) {
-        t[0] = '0.000%';
-        t[1] = Math.min(100, pt.move[4] / dur * 100).toFixed(3) + '%';
-        t[2] = Math.min(100, pt.move[5] / dur * 100).toFixed(3) + '%';
-        t[3] = '100.000%';
-        for (var j = 0; j <= 3; j++) {
-          var tx = this.scale * (pt.move[j < 2 ? 0 : 2] - pt.pos.x),
-              ty = this.scale * (pt.move[j < 2 ? 1 : 3] - pt.pos.y);
-          kf.set(t[j], 'transform', 'translate(' + tx + 'px, ' + ty + 'px)');
-        }
-      }
-    }
-    kfStr = kf.toString();
-    var name = getName(kfStr);
-    if (name === null) {
-      name = 'ASS-' + generateUUID();
-      kfObj[name] = kfStr;
-    }
-    pt.animationName = name;
+  }
 
-    for (var j = pt.content.length - 1; j >= 0; j--) {
-      kf = new KeyFrames();
-      var tags = JSON.parse(JSON.stringify(pt.content[j].tags));
-      if (tags.t) {
-        for (var k = tags.t.length - 1; k >= 0; k--) {
-          var ttags = JSON.parse(JSON.stringify(tags.t[k].tags));
-          t[0] = '0.000%';
-          t[1] = Math.min(100, tags.t[k].t1 / dur * 100).toFixed(3) + '%';
-          t[2] = Math.min(100, tags.t[k].t2 / dur * 100).toFixed(3) + '%';
-          t[3] = '100.000%';
-          if (ttags.fs) {
-            var fsFrom = this.scale * getRealFontSize(tags.fs, tags.fn) + 'px',
-                fsTo = this.scale * getRealFontSize(ttags.fs, tags.fn) + 'px';
-            kf.set(t[0], 'font-size', fsFrom);
-            kf.set(t[1], 'font-size', fsFrom);
-            kf.set(t[2], 'font-size', fsTo);
-            kf.set(t[3], 'font-size', fsTo);
-          }
-          if (ttags.fsp) {
-            var fspFrom = this.scale * tags.fsp + 'px',
-                fspTo = this.scale * ttags.fsp + 'px';
-            kf.set(t[0], 'letter-spacing', fspFrom);
-            kf.set(t[1], 'letter-spacing', fspFrom);
-            kf.set(t[2], 'letter-spacing', fspTo);
-            kf.set(t[3], 'letter-spacing', fspTo);
-          }
-          if (ttags.c1 || ttags.a1) {
-            ttags.c1 = ttags.c1 || tags.c1;
-            ttags.a1 = ttags.a1 || tags.a1;
-            var cFrom = toRGBA(tags.a1 + tags.c1),
-                cTo = toRGBA(ttags.a1 + ttags.c1);
-            kf.set(t[0], 'color', cFrom);
-            kf.set(t[1], 'color', cFrom);
-            kf.set(t[2], 'color', cTo);
-            kf.set(t[3], 'color', cTo);
-          }
-          if (ttags.a1 &&
-              ttags.a1 === ttags.a2 &&
-              ttags.a2 === ttags.a3 &&
-              ttags.a3 === ttags.a4) {
-            var aFrom = 1 - parseInt(tags.a1, 16) / 255,
-                aTo = 1 - parseInt(ttags.a1, 16) / 255;
-            kf.set(t[0], 'opacity', aFrom);
-            kf.set(t[1], 'opacity', aFrom);
-            kf.set(t[2], 'opacity', aTo);
-            kf.set(t[3], 'opacity', aTo);
-          }
-          var bsTags = ['c3', 'a3', 'c4', 'a4',
-                        'xbord', 'ybord', 'xshad', 'yshad', 'blur'];
-          var hasTextShadow = function(t) {
-            for (var i = bsTags.length - 1; i >= 0; --i) {
-              if (t[bsTags[i]] !== undefined) return true;
-            }
-            return false;
-          };
-          if (hasTextShadow(ttags)) {
-            bsTags.forEach(function(e) {
-              if (ttags[e] === undefined) ttags[e] = tags[e];
-            });
-            var sisbas = this.tree.ScriptInfo['ScaledBorderAndShadow'],
-                sbas = /Yes/i.test(sisbas) ? this.scale : 1,
-                bsFrom = createCSSBS(tags, sbas),
-                bsTo = createCSSBS(ttags, sbas);
-            kf.set(t[0], 'text-shadow', bsFrom);
-            kf.set(t[1], 'text-shadow', bsFrom);
-            kf.set(t[2], 'text-shadow', bsTo);
-            kf.set(t[3], 'text-shadow', bsTo);
-          }
-          if ((ttags.fscx && ttags.fscx !== 100) ||
-              (ttags.fscy && ttags.fscy !== 100) ||
-              ttags.frx !== undefined ||
-              ttags.fry !== undefined ||
-              ttags.frz !== undefined ||
-              ttags.fax !== undefined ||
-              ttags.fay !== undefined) {
-            var tfTags = ['fscx', 'fscy', 'frx', 'fry', 'frz', 'fax', 'fay'];
-            tfTags.forEach(function(e) {
-              if (ttags[e] === undefined) ttags[e] = tags[e];
-            });
-            if (tags.p) {
-              ttags.fscx = (ttags.fscx / tags.fscx) * 100;
-              ttags.fscy = (ttags.fscy / tags.fscy) * 100;
-              tags.fscx = tags.fscy = 100;
-            }
-            var tFrom = createTransform(tags),
-                tTo = createTransform(ttags);
-            kf.set(t[0], 'transform', tFrom);
-            kf.set(t[1], 'transform', tFrom);
-            kf.set(t[2], 'transform', tTo);
-            kf.set(t[3], 'transform', tTo);
-          }
-        }
-      }
-      kfStr = kf.toString();
-      var name = getName(kfStr);
-      if (name === null) {
-        name = 'ASS-' + generateUUID();
-        kfObj[name] = kfStr;
-      }
-      pt.content[j].animationName = name;
-    }
+  function parseDrawing(text) {
+    return text
+      .toLowerCase()
+      // numbers
+      .replace(/([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)/g, ' $1 ')
+      // commands
+      .replace(/([mnlbspc])/g, ' $1 ')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .split(/\s(?=[mnlbspc])/)
+      .map(function (cmd) { return (
+        cmd.split(' ')
+          .filter(function (x, i) { return !(i && Number.isNaN(x * 1)); })
+      ); });
   }
-  var cssText = [];
-  for (var name in kfObj) {
-    cssText.push('@keyframes ' + name + kfObj[name]);
-    cssText.push('@-webkit-keyframes ' + name + kfObj[name]);
-  }
-  $animation.innerHTML = cssText.join('');
-};
 
-var createSVGBS = function(t, id, s) {
-  var hasBorder = t.xbord || t.ybord,
-      hasShadow = t.xshad || t.yshad,
-      isTrans = (t.a1 === 'FF'),
-      blur = t.blur || 0;
-  var filter = document.createElementNS(xmlns, 'filter');
-  filter.setAttributeNS(null, 'id', id);
-  var sg_b = document.createElementNS(xmlns, 'feGaussianBlur');
-  sg_b.setAttributeNS(null, 'stdDeviation', hasBorder ? 0 : blur);
-  sg_b.setAttributeNS(null, 'in', 'SourceGraphic');
-  sg_b.setAttributeNS(null, 'result', 'sg_b');
-  filter.appendChild(sg_b);
-  var c1 = document.createElementNS(xmlns, 'feFlood');
-  c1.setAttributeNS(null, 'flood-color', toRGBA(t.a1 + t.c1));
-  c1.setAttributeNS(null, 'result', 'c1');
-  filter.appendChild(c1);
-  var main = document.createElementNS(xmlns, 'feComposite');
-  main.setAttributeNS(null, 'operator', 'in');
-  main.setAttributeNS(null, 'in', 'c1');
-  main.setAttributeNS(null, 'in2', 'sg_b');
-  main.setAttributeNS(null, 'result', 'main');
-  filter.appendChild(main);
-  if (hasBorder) {
-    var dil = document.createElementNS(xmlns, 'feMorphology');
-    dil.setAttributeNS(null, 'radius', t.xbord * s + ' ' + t.ybord * s);
-    dil.setAttributeNS(null, 'operator', 'dilate');
-    dil.setAttributeNS(null, 'in', 'SourceGraphic');
-    dil.setAttributeNS(null, 'result', 'dil');
-    filter.appendChild(dil);
-    var dil_b = document.createElementNS(xmlns, 'feGaussianBlur');
-    dil_b.setAttributeNS(null, 'stdDeviation', blur);
-    dil_b.setAttributeNS(null, 'in', 'dil');
-    dil_b.setAttributeNS(null, 'result', 'dil_b');
-    filter.appendChild(dil_b);
-    var dil_b_o = document.createElementNS(xmlns, 'feComposite');
-    dil_b_o.setAttributeNS(null, 'operator', 'out');
-    dil_b_o.setAttributeNS(null, 'in', 'dil_b');
-    dil_b_o.setAttributeNS(null, 'in2', 'SourceGraphic');
-    dil_b_o.setAttributeNS(null, 'result', 'dil_b_o');
-    filter.appendChild(dil_b_o);
-    var c3 = document.createElementNS(xmlns, 'feFlood');
-    c3.setAttributeNS(null, 'flood-color', toRGBA(t.a3 + t.c3));
-    c3.setAttributeNS(null, 'result', 'c3');
-    filter.appendChild(c3);
-    var border = document.createElementNS(xmlns, 'feComposite');
-    border.setAttributeNS(null, 'operator', 'in');
-    border.setAttributeNS(null, 'in', 'c3');
-    border.setAttributeNS(null, 'in2', 'dil_b_o');
-    border.setAttributeNS(null, 'result', 'border');
-    filter.appendChild(border);
-  }
-  if (hasShadow && (hasBorder || !isTrans)) {
-    var off = document.createElementNS(xmlns, 'feOffset');
-    off.setAttributeNS(null, 'dx', t.xshad * s);
-    off.setAttributeNS(null, 'dy', t.yshad * s);
-    off.setAttributeNS(null, 'in', hasBorder ? 'dil' : 'SourceGraphic');
-    off.setAttributeNS(null, 'result', 'off');
-    filter.appendChild(off);
-    var off_b = document.createElementNS(xmlns, 'feGaussianBlur');
-    off_b.setAttributeNS(null, 'stdDeviation', blur);
-    off_b.setAttributeNS(null, 'in', 'off');
-    off_b.setAttributeNS(null, 'result', 'off_b');
-    filter.appendChild(off_b);
-    if (isTrans) {
-      var sg_off = document.createElementNS(xmlns, 'feOffset');
-      sg_off.setAttributeNS(null, 'dx', t.xshad * s);
-      sg_off.setAttributeNS(null, 'dy', t.yshad * s);
-      sg_off.setAttributeNS(null, 'in', 'SourceGraphic');
-      sg_off.setAttributeNS(null, 'result', 'sg_off');
-      filter.appendChild(sg_off);
-      var off_b_o = document.createElementNS(xmlns, 'feComposite');
-      off_b_o.setAttributeNS(null, 'operator', 'out');
-      off_b_o.setAttributeNS(null, 'in', 'off_b');
-      off_b_o.setAttributeNS(null, 'in2', 'sg_off');
-      off_b_o.setAttributeNS(null, 'result', 'off_b_o');
-      filter.appendChild(off_b_o);
-    }
-    var c4 = document.createElementNS(xmlns, 'feFlood');
-    c4.setAttributeNS(null, 'flood-color', toRGBA(t.a4 + t.c4));
-    c4.setAttributeNS(null, 'result', 'c4');
-    filter.appendChild(c4);
-    var shadow = document.createElementNS(xmlns, 'feComposite');
-    shadow.setAttributeNS(null, 'operator', 'in');
-    shadow.setAttributeNS(null, 'in', 'c4');
-    shadow.setAttributeNS(null, 'in2', isTrans ? 'off_b_o' : 'off_b');
-    shadow.setAttributeNS(null, 'result', 'shadow');
-    filter.appendChild(shadow);
-  }
-  var merge = document.createElementNS(xmlns, 'feMerge');
-  if (hasShadow && (hasBorder || !isTrans)) {
-    var nodeShadow = document.createElementNS(xmlns, 'feMergeNode');
-    nodeShadow.setAttributeNS(null, 'in', 'shadow');
-    merge.appendChild(nodeShadow);
-  }
-  if (hasBorder) {
-    var nodeBorder = document.createElementNS(xmlns, 'feMergeNode');
-    nodeBorder.setAttributeNS(null, 'in', 'border');
-    merge.appendChild(nodeBorder);
-  }
-  var nodeMain = document.createElementNS(xmlns, 'feMergeNode');
-  nodeMain.setAttributeNS(null, 'in', 'main');
-  merge.appendChild(nodeMain);
-  filter.appendChild(merge);
-  return filter;
-};
-var createCSSBS = function(t, s) {
-  var arr = [],
-      oc = toRGBA(t.a3 + t.c3),
-      ox = t.xbord * s,
-      oy = t.ybord * s,
-      sc = toRGBA(t.a4 + t.c4),
-      sx = t.xshad * s,
-      sy = t.yshad * s,
-      blur = t.blur || 0;
-  if (!(ox + oy + sx + sy)) return 'none';
-  if (ox || oy) {
-    for (var i = -1; i <= 1; i++)
-      for (var j = -1; j <= 1; j++) {
-        for (var x = 1; x < ox; x++) {
-          for (var y = 1; y < oy; y++)
-            if (i || j) arr.push(oc + ' ' +
-                                 i * x + 'px ' +
-                                 j * y + 'px ' +
-                                 blur + 'px');
-        }
-        arr.push(oc + ' ' +
-                 i * ox + 'px ' +
-                 j * oy + 'px ' +
-                 blur + 'px');
-      }
-  }
-  if (sx || sy) {
-    var pnx = sx > 0 ? 1 : -1,
-        pny = sy > 0 ? 1 : -1;
-    sx = Math.abs(sx);
-    sy = Math.abs(sy);
-    for (var x = Math.max(ox, sx - ox); x < sx + ox; x++) {
-      for (var y = Math.max(oy, sy - oy); y < sy + oy; y++)
-        arr.push(sc + ' ' +
-                 x * pnx + 'px ' +
-                 y * pny + 'px ' +
-                 blur + 'px');
-    }
-    arr.push(sc + ' ' +
-            (sx + ox) * pnx + 'px ' +
-            (sy + oy) * pny + 'px ' +
-            blur + 'px');
-  }
-  return arr.join();
-};
+  var numTags = [
+    'b', 'i', 'u', 's', 'fsp',
+    'k', 'K', 'kf', 'ko', 'kt',
+    'fe', 'q', 'p', 'pbo', 'a', 'an',
+    'fscx', 'fscy', 'fax', 'fay', 'frx', 'fry', 'frz', 'fr',
+    'be', 'blur', 'bord', 'xbord', 'ybord', 'shad', 'xshad', 'yshad' ];
 
-var $clipPath = document.createElementNS(xmlns, 'svg');
-$clipPath.setAttributeNS(null, 'class', 'ASS-clip-path');
-var $clipPathDefs = document.createElementNS(xmlns, 'defs');
-$clipPath.appendChild($clipPathDefs);
-var createClipPath = function(dia) {
-  if (dia.clip) {
-    var d = '',
-        id = 'ASS-' + generateUUID(),
-        s = 1 / (1 << (dia.clip.scale - 1));
-    var prx = this.tree.ScriptInfo.PlayResX,
-        pry = this.tree.ScriptInfo.PlayResY;
-    if (dia.clip.dots !== null) {
-      var n = dia.clip.dots.map(function(d, i) {
-        if (i & 1) return d / pry;
-        else return d / prx;
+  var numRegexs = numTags.map(function (nt) { return ({ name: nt, regex: new RegExp(("^" + nt + "-?\\d")) }); });
+
+  function parseTag(text) {
+    var assign;
+
+    var tag = {};
+    for (var i = 0; i < numRegexs.length; i++) {
+      var ref = numRegexs[i];
+      var name = ref.name;
+      var regex = ref.regex;
+      if (regex.test(text)) {
+        tag[name] = text.slice(name.length) * 1;
+        return tag;
+      }
+    }
+    if (/^fn/.test(text)) {
+      tag.fn = text.slice(2);
+    } else if (/^r/.test(text)) {
+      tag.r = text.slice(1);
+    } else if (/^fs[\d+-]/.test(text)) {
+      tag.fs = text.slice(2);
+    } else if (/^\d?c&?H?[0-9a-f]+|^\d?c$/i.test(text)) {
+      var ref$1 = text.match(/^(\d?)c&?H?(\w*)/);
+      var num = ref$1[1];
+      var color = ref$1[2];
+      tag[("c" + (num || 1))] = color && ("000000" + color).slice(-6);
+    } else if (/^\da&?H?[0-9a-f]+/i.test(text)) {
+      var ref$2 = text.match(/^(\d)a&?H?(\w\w)/);
+      var num$1 = ref$2[1];
+      var alpha = ref$2[2];
+      tag[("a" + num$1)] = alpha;
+    } else if (/^alpha&?H?[0-9a-f]+/i.test(text)) {
+      (assign = text.match(/^alpha&?H?([0-9a-f]+)/i), tag.alpha = assign[1]);
+      tag.alpha = ("00" + (tag.alpha)).slice(-2);
+    } else if (/^(?:pos|org|move|fad|fade)\(/.test(text)) {
+      var ref$3 = text.match(/^(\w+)\((.*?)\)?$/);
+      var key = ref$3[1];
+      var value = ref$3[2];
+      tag[key] = value
+        .trim()
+        .split(/\s*,\s*/)
+        .map(Number);
+    } else if (/^i?clip/.test(text)) {
+      var p = text
+        .match(/^i?clip\((.*?)\)?$/)[1]
+        .trim()
+        .split(/\s*,\s*/);
+      tag.clip = {
+        inverse: /iclip/.test(text),
+        scale: 1,
+        drawing: null,
+        dots: null,
+      };
+      if (p.length === 1) {
+        tag.clip.drawing = parseDrawing(p[0]);
+      }
+      if (p.length === 2) {
+        tag.clip.scale = p[0] * 1;
+        tag.clip.drawing = parseDrawing(p[1]);
+      }
+      if (p.length === 4) {
+        tag.clip.dots = p.map(Number);
+      }
+    } else if (/^t\(/.test(text)) {
+      var p$1 = text
+        .match(/^t\((.*?)\)?$/)[1]
+        .trim()
+        .replace(/\\.*/, function (x) { return x.replace(/,/g, '\n'); })
+        .split(/\s*,\s*/);
+      if (!p$1[0]) { return tag; }
+      tag.t = {
+        t1: 0,
+        t2: 0,
+        accel: 1,
+        tags: p$1[p$1.length - 1]
+          .replace(/\n/g, ',')
+          .split('\\')
+          .slice(1)
+          .map(parseTag),
+      };
+      if (p$1.length === 2) {
+        tag.t.accel = p$1[0] * 1;
+      }
+      if (p$1.length === 3) {
+        tag.t.t1 = p$1[0] * 1;
+        tag.t.t2 = p$1[1] * 1;
+      }
+      if (p$1.length === 4) {
+        tag.t.t1 = p$1[0] * 1;
+        tag.t.t2 = p$1[1] * 1;
+        tag.t.accel = p$1[2] * 1;
+      }
+    }
+
+    return tag;
+  }
+
+  function parseTags(text) {
+    var tags = [];
+    var depth = 0;
+    var str = '';
+    for (var i = 0; i < text.length; i++) {
+      var x = text[i];
+      if (x === '(') { depth++; }
+      if (x === ')') { depth--; }
+      if (depth < 0) { depth = 0; }
+      if (!depth && x === '\\') {
+        if (str) {
+          tags.push(str);
+        }
+        str = '';
+      } else {
+        str += x;
+      }
+    }
+    tags.push(str);
+    return tags.map(parseTag);
+  }
+
+  function parseText(text) {
+    var pairs = text.split(/{([^{}]*?)}/);
+    var parsed = [];
+    if (pairs[0].length) {
+      parsed.push({ tags: [], text: pairs[0], drawing: [] });
+    }
+    for (var i = 1; i < pairs.length; i += 2) {
+      var tags = parseTags(pairs[i]);
+      var isDrawing = tags.reduce(function (v, tag) { return (tag.p === undefined ? v : !!tag.p); }, false);
+      parsed.push({
+        tags: tags,
+        text: isDrawing ? '' : pairs[i + 1],
+        drawing: isDrawing ? parseDrawing(pairs[i + 1]) : [],
       });
-      d += 'M' + [n[0], n[1]].join();
-      d += 'L' + [n[0], n[3], n[2], n[3], n[2], n[1]].join() + 'Z';
     }
-    if (dia.clip.commands !== null) {
-      d = getDrawingAttributes(dia.clip.commands, prx, pry).d;
-    }
-    if (dia.clip.inverse) {
-      d += 'M0,0L' + [0, s, s, s, s, 0, 0, 0].join() + 'Z';
-    }
-    dia.clipPath = document.createElementNS(xmlns, 'clipPath');
-    dia.clipPath.setAttributeNS(null, 'id', id);
-    dia.clipPath.setAttributeNS(null, 'clipPathUnits', 'objectBoundingBox');
-    var path = document.createElementNS(xmlns, 'path');
-    path.setAttributeNS(null, 'd', d);
-    path.setAttributeNS(null, 'transform', 'scale(' + s + ')');
-    path.setAttributeNS(null, 'clip-rule', 'evenodd');
-    dia.clipPath.appendChild(path);
-    $clipPathDefs.appendChild(dia.clipPath);
-    var cp = 'clip-path:url(#' + id + ');';
-    return '-webkit-' + cp + cp;
+    return {
+      raw: text,
+      combined: parsed.map(function (frag) { return frag.text; }).join(''),
+      parsed: parsed,
+    };
   }
-  return '';
-};
 
-var getChannel = function(dia) {
-  var L = dia.Layer,
-      SW = this.width - Math.floor(this.scale * (dia.MarginL + dia.MarginR)),
-      SH = this.height,
-      W = dia.width,
-      H = dia.height,
-      V = Math.floor(this.scale * dia.MarginV),
-      vct = this.video.currentTime,
-      count = 0;
-  channel[L] = channel[L] || {
-    left: new Uint16Array(SH + 1),
-    center: new Uint16Array(SH + 1),
-    right: new Uint16Array(SH + 1),
-    leftEnd: new Uint32Array(SH + 1),
-    centerEnd: new Uint32Array(SH + 1),
-    rightEnd: new Uint32Array(SH + 1),
-  };
-  var align = ['right', 'left', 'center'][dia.Alignment % 3];
-  var willCollide = function(x) {
-    var l = channel[L].left[x],
-        c = channel[L].center[x],
-        r = channel[L].right[x],
-        le = channel[L].leftEnd[x] / 100,
-        ce = channel[L].centerEnd[x] / 100,
-        re = channel[L].rightEnd[x] / 100;
-    if (align === 'left') {
-      if ((le > vct && l) ||
-          (ce > vct && c && 2 * W + c > SW) ||
-          (re > vct && r && W + r > SW)) return true;
-    }
-    if (align === 'center') {
-      if ((le > vct && l && 2 * l + W > SW) ||
-          (ce > vct && c) ||
-          (re > vct && r && 2 * r + W > SW)) return true;
-    }
-    if (align === 'right') {
-      if ((le > vct && l && l + W > SW) ||
-          (ce > vct && c && 2 * W + c > SW) ||
-          (re > vct && r)) return true;
-    }
-    return false;
-  };
-  var found = function(x) {
-    if (willCollide(x)) count = 0;
-    else count++;
-    if (count >= H) {
-      dia.channel = x;
-      return true;
-    } else return false;
-  };
-  if (dia.Alignment <= 3) {
-    for (var i = SH - V - 1; i > V; i--) if (found(i)) break;
-  } else if (dia.Alignment >= 7) {
-    for (var i = V + 1; i < SH - V; i++) if (found(i)) break;
-  } else for (var i = (SH - H) >> 1; i < SH - V; i++) if (found(i)) break;
-  if (dia.Alignment > 3) dia.channel -= H - 1;
-  for (var i = dia.channel; i < dia.channel + H; i++) {
-    channel[L][align][i] = W;
-    channel[L][align + 'End'][i] = dia.End * 100;
+  function parseTime(time) {
+    var t = time.split(':');
+    return t[0] * 3600 + t[1] * 60 + t[2] * 1;
   }
-  return dia.channel;
-};
 
-var createDrawing = function(cn, ct, dia) {
-  var t = ct.tags,
-      s = this.scale / (1 << (t.p - 1)),
-      sx = (t.fscx ? t.fscx / 100 : 1) * s,
-      sy = (t.fscy ? t.fscy / 100 : 1) * s,
-      gda = getDrawingAttributes(ct.commands),
-      vb = [gda.minX, gda.minY, gda.width, gda.height].join(' '),
-      filterID = 'ASS-' + generateUUID(),
-      symbolID = 'ASS-' + generateUUID(),
-      sisbas = this.tree.ScriptInfo['ScaledBorderAndShadow'],
-      sbas = /Yes/i.test(sisbas) ? this.scale : 1,
-      xlink = 'http://www.w3.org/1999/xlink';
-  var blur = t.blur || 0,
-      vbx = t.xbord + (t.xshad < 0 ? -t.xshad : 0) + blur,
-      vby = t.ybord + (t.yshad < 0 ? -t.yshad : 0) + blur,
-      vbw = gda.width * sx + 2 * t.xbord + Math.abs(t.xshad) + 2 * blur,
-      vbh = gda.height * sx + 2 * t.ybord + Math.abs(t.yshad) + 2 * blur;
-  var svg = document.createElementNS(xmlns, 'svg');
-  svg.setAttributeNS(null, 'width', vbw);
-  svg.setAttributeNS(null, 'height', vbh);
-  svg.setAttributeNS(null, 'viewBox', [-vbx, -vby, vbw, vbh].join(' '));
-  var defs = document.createElementNS(xmlns, 'defs');
-  defs.appendChild(createSVGBS(t, filterID, sbas));
-  svg.appendChild(defs);
-  var symbol = document.createElementNS(xmlns, 'symbol');
-  symbol.setAttributeNS(null, 'id', symbolID);
-  symbol.setAttributeNS(null, 'viewBox', vb);
-  svg.appendChild(symbol);
-  var path = document.createElementNS(xmlns, 'path');
-  path.setAttributeNS(null, 'd', gda.d);
-  symbol.appendChild(path);
-  var use = document.createElementNS(xmlns, 'use');
-  use.setAttributeNS(null, 'width', gda.width * sx);
-  use.setAttributeNS(null, 'height', gda.height * sy);
-  use.setAttributeNS(xlink, 'xlink:href', '#' + symbolID);
-  use.setAttributeNS(null, 'filter', 'url(#' + filterID + ')');
-  svg.appendChild(use);
-  cn.style.cssText += 'position:relative;' +
-                      'width:' + gda.width * sx + 'px;' +
-                      'height:' + gda.height * sy + 'px;';
-  svg.style.cssText = 'position:absolute;' +
-                      'left:' + (gda.minX * sx - vbx) + 'px;' +
-                      'top:' + (gda.minY * sy - vby) + 'px;';
-  return svg;
-};
-var getDrawingAttributes = function(commands, normalizeX, normalizeY) {
-  normalizeX = normalizeX || 1;
-  normalizeY = normalizeY || 1;
-  var minX = Number.MAX_VALUE,
-      minY = Number.MAX_VALUE,
-      maxX = Number.MIN_VALUE,
-      maxY = Number.MIN_VALUE;
-  var arr = [];
-  for (var len = commands.length, i = 0; i < len; i++) {
-    commands[i].points.forEach(function(p) {
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-      p.x /= normalizeX;
-      p.y /= normalizeY;
+  function parseDialogue(text, format) {
+    var fields = text.split(',');
+    if (fields.length > format.length) {
+      var textField = fields.slice(format.length - 1).join();
+      fields = fields.slice(0, format.length - 1);
+      fields.push(textField);
+    }
+
+    var dia = {};
+    for (var i = 0; i < fields.length; i++) {
+      var fmt = format[i];
+      var fld = fields[i].trim();
+      switch (fmt) {
+        case 'Layer':
+        case 'MarginL':
+        case 'MarginR':
+        case 'MarginV':
+          dia[fmt] = fld * 1;
+          break;
+        case 'Start':
+        case 'End':
+          dia[fmt] = parseTime(fld);
+          break;
+        case 'Effect':
+          dia[fmt] = parseEffect(fld);
+          break;
+        case 'Text':
+          dia[fmt] = parseText(fld);
+          break;
+        default:
+          dia[fmt] = fld;
+      }
+    }
+
+    return dia;
+  }
+
+  function parseFormat(text) {
+    return text.match(/Format\s*:\s*(.*)/i)[1].split(/\s*,\s*/);
+  }
+
+  function parseStyle(text) {
+    return text.match(/Style\s*:\s*(.*)/i)[1].split(/\s*,\s*/);
+  }
+
+  function parse(text) {
+    var tree = {
+      info: {},
+      styles: { format: [], style: [] },
+      events: { format: [], comment: [], dialogue: [] },
+    };
+    var lines = text.split(/\r?\n/);
+    var state = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (/^;/.test(line)) { continue; }
+
+      if (/^\[Script Info\]/i.test(line)) { state = 1; }
+      else if (/^\[V4\+? Styles\]/i.test(line)) { state = 2; }
+      else if (/^\[Events\]/i.test(line)) { state = 3; }
+      else if (/^\[.*\]/.test(line)) { state = 0; }
+
+      if (state === 0) { continue; }
+      if (state === 1) {
+        if (/:/.test(line)) {
+          var ref = line.match(/(.*?)\s*:\s*(.*)/);
+          var key = ref[1];
+          var value = ref[2];
+          tree.info[key] = value;
+        }
+      }
+      if (state === 2) {
+        if (/^Format\s*:/i.test(line)) {
+          tree.styles.format = parseFormat(line);
+        }
+        if (/^Style\s*:/i.test(line)) {
+          tree.styles.style.push(parseStyle(line));
+        }
+      }
+      if (state === 3) {
+        if (/^Format\s*:/i.test(line)) {
+          tree.events.format = parseFormat(line);
+        }
+        if (/^(?:Comment|Dialogue)\s*:/i.test(line)) {
+          var ref$1 = line.match(/^(\w+?)\s*:\s*(.*)/i);
+          var key$1 = ref$1[1];
+          var value$1 = ref$1[2];
+          tree.events[key$1.toLowerCase()].push(parseDialogue(value$1, tree.events.format));
+        }
+      }
+    }
+
+    return tree;
+  }
+
+  var assign = Object.assign || (
+    /* istanbul ignore next */
+    function assign(target) {
+      var sources = [], len = arguments.length - 1;
+      while ( len-- > 0 ) sources[ len ] = arguments[ len + 1 ];
+
+      for (var i = 0; i < sources.length; i++) {
+        if (!sources[i]) { continue; }
+        var keys = Object.keys(sources[i]);
+        for (var j = 0; j < keys.length; j++) {
+          // eslint-disable-next-line no-param-reassign
+          target[keys[j]] = sources[i][keys[j]];
+        }
+      }
+      return target;
+    }
+  );
+
+  function createCommand(arr) {
+    var cmd = {
+      type: null,
+      prev: null,
+      next: null,
+      points: [],
+    };
+    if (/[mnlbs]/.test(arr[0])) {
+      cmd.type = arr[0]
+        .toUpperCase()
+        .replace('N', 'L')
+        .replace('B', 'C');
+    }
+    for (var len = arr.length - !(arr.length & 1), i = 1; i < len; i += 2) {
+      cmd.points.push({ x: arr[i] * 1, y: arr[i + 1] * 1 });
+    }
+    return cmd;
+  }
+
+  function isValid(cmd) {
+    if (!cmd.points.length || !cmd.type) {
+      return false;
+    }
+    if (/C|S/.test(cmd.type) && cmd.points.length < 3) {
+      return false;
+    }
+    return true;
+  }
+
+  function getViewBox(commands) {
+    var ref;
+
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+    (ref = []).concat.apply(ref, commands.map(function (ref) {
+      var points = ref.points;
+
+      return points;
+    })).forEach(function (ref) {
+      var x = ref.x;
+      var y = ref.y;
+
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
     });
-    arr.push(commands[i].toString());
-    commands[i].points.forEach(function(p) {
-      p.x *= normalizeX;
-      p.y *= normalizeY;
+    return {
+      minX: minX,
+      minY: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }
+
+  /**
+   * Convert S command to B command
+   * Reference from https://github.com/d3/d3/blob/v3.5.17/src/svg/line.js#L259
+   * @param  {Array}  points points
+   * @param  {String} prev   type of previous command
+   * @param  {String} next   type of next command
+   * @return {Array}         converted commands
+   */
+  function s2b(points, prev, next) {
+    var results = [];
+    var bb1 = [0, 2 / 3, 1 / 3, 0];
+    var bb2 = [0, 1 / 3, 2 / 3, 0];
+    var bb3 = [0, 1 / 6, 2 / 3, 1 / 6];
+    var dot4 = function (a, b) { return (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]); };
+    var px = [points[points.length - 1].x, points[0].x, points[1].x, points[2].x];
+    var py = [points[points.length - 1].y, points[0].y, points[1].y, points[2].y];
+    results.push({
+      type: prev === 'M' ? 'M' : 'L',
+      points: [{ x: dot4(bb3, px), y: dot4(bb3, py) }],
+    });
+    for (var i = 3; i < points.length; i++) {
+      px = [points[i - 3].x, points[i - 2].x, points[i - 1].x, points[i].x];
+      py = [points[i - 3].y, points[i - 2].y, points[i - 1].y, points[i].y];
+      results.push({
+        type: 'C',
+        points: [
+          { x: dot4(bb1, px), y: dot4(bb1, py) },
+          { x: dot4(bb2, px), y: dot4(bb2, py) },
+          { x: dot4(bb3, px), y: dot4(bb3, py) } ],
+      });
+    }
+    if (next === 'L' || next === 'C') {
+      var last = points[points.length - 1];
+      results.push({ type: 'L', points: [{ x: last.x, y: last.y }] });
+    }
+    return results;
+  }
+
+  function toSVGPath(instructions) {
+    return instructions.map(function (ref) {
+      var type = ref.type;
+      var points = ref.points;
+
+      return (
+      type + points.map(function (ref) {
+        var x = ref.x;
+        var y = ref.y;
+
+        return (x + "," + y);
+      }).join(',')
+    );
+    }).join('');
+  }
+
+  function compileDrawing(rawCommands) {
+    var ref$1;
+
+    var commands = [];
+    var i = 0;
+    while (i < rawCommands.length) {
+      var arr = rawCommands[i];
+      var cmd = createCommand(arr);
+      if (isValid(cmd)) {
+        if (cmd.type === 'S') {
+          var ref = (commands[i - 1] || { points: [{ x: 0, y: 0 }] }).points.slice(-1)[0];
+          var x = ref.x;
+          var y = ref.y;
+          cmd.points.unshift({ x: x, y: y });
+        }
+        if (i) {
+          cmd.prev = commands[i - 1].type;
+          commands[i - 1].next = cmd.type;
+        }
+        commands.push(cmd);
+        i++;
+      } else {
+        if (i && commands[i - 1].type === 'S') {
+          var additionPoints = {
+            p: cmd.points,
+            c: commands[i - 1].points.slice(0, 3),
+          };
+          commands[i - 1].points = commands[i - 1].points.concat(
+            (additionPoints[arr[0]] || []).map(function (ref) {
+              var x = ref.x;
+              var y = ref.y;
+
+              return ({ x: x, y: y });
+          })
+          );
+        }
+        rawCommands.splice(i, 1);
+      }
+    }
+    var instructions = (ref$1 = []).concat.apply(
+      ref$1, commands.map(function (ref) {
+        var type = ref.type;
+        var points = ref.points;
+        var prev = ref.prev;
+        var next = ref.next;
+
+        return (
+        type === 'S'
+          ? s2b(points, prev, next)
+          : { type: type, points: points }
+      );
+    })
+    );
+
+    return assign({ instructions: instructions, d: toSVGPath(instructions) }, getViewBox(commands));
+  }
+
+  var tTags = [
+    'fs', 'clip',
+    'c1', 'c2', 'c3', 'c4', 'a1', 'a2', 'a3', 'a4', 'alpha',
+    'fscx', 'fscy', 'fax', 'fay', 'frx', 'fry', 'frz', 'fr',
+    'be', 'blur', 'bord', 'xbord', 'ybord', 'shad', 'xshad', 'yshad' ];
+
+  function compileTag(tag, key, presets) {
+    var obj, obj$1, obj$2;
+
+    if ( presets === void 0 ) presets = {};
+    var value = tag[key];
+    if (value === undefined) {
+      return null;
+    }
+    if (key === 'pos' || key === 'org') {
+      return value.length === 2 ? ( obj = {}, obj[key] = { x: value[0], y: value[1] }, obj) : null;
+    }
+    if (key === 'move') {
+      var x1 = value[0];
+      var y1 = value[1];
+      var x2 = value[2];
+      var y2 = value[3];
+      var t1 = value[4]; if ( t1 === void 0 ) t1 = 0;
+      var t2 = value[5]; if ( t2 === void 0 ) t2 = 0;
+      return value.length === 4 || value.length === 6
+        ? { move: { x1: x1, y1: y1, x2: x2, y2: y2, t1: t1, t2: t2 } }
+        : null;
+    }
+    if (key === 'fad' || key === 'fade') {
+      if (value.length === 2) {
+        var t1$1 = value[0];
+        var t2$1 = value[1];
+        return { fade: { type: 'fad', t1: t1$1, t2: t2$1 } };
+      }
+      if (value.length === 7) {
+        var a1 = value[0];
+        var a2 = value[1];
+        var a3 = value[2];
+        var t1$2 = value[3];
+        var t2$2 = value[4];
+        var t3 = value[5];
+        var t4 = value[6];
+        return { fade: { type: 'fade', a1: a1, a2: a2, a3: a3, t1: t1$2, t2: t2$2, t3: t3, t4: t4 } };
+      }
+      return null;
+    }
+    if (key === 'clip') {
+      var inverse = value.inverse;
+      var scale = value.scale;
+      var drawing = value.drawing;
+      var dots = value.dots;
+      if (drawing) {
+        return { clip: { inverse: inverse, scale: scale, drawing: compileDrawing(drawing), dots: dots } };
+      }
+      if (dots) {
+        var x1$1 = dots[0];
+        var y1$1 = dots[1];
+        var x2$1 = dots[2];
+        var y2$1 = dots[3];
+        return { clip: { inverse: inverse, scale: scale, drawing: drawing, dots: { x1: x1$1, y1: y1$1, x2: x2$1, y2: y2$1 } } };
+      }
+      return null;
+    }
+    if (/^[xy]?(bord|shad)$/.test(key)) {
+      value = Math.max(value, 0);
+    }
+    if (key === 'bord') {
+      return { xbord: value, ybord: value };
+    }
+    if (key === 'shad') {
+      return { xshad: value, yshad: value };
+    }
+    if (/^c\d$/.test(key)) {
+      return ( obj$1 = {}, obj$1[key] = value || presets[key], obj$1);
+    }
+    if (key === 'alpha') {
+      return { a1: value, a2: value, a3: value, a4: value };
+    }
+    if (key === 'fr') {
+      return { frz: value };
+    }
+    if (key === 'fs') {
+      return {
+        fs: /^\+|-/.test(value)
+          ? (value * 1 > -10 ? (1 + value / 10) : 1) * presets.fs
+          : value * 1,
+      };
+    }
+    if (key === 't') {
+      var t1$3 = value.t1;
+      var accel = value.accel;
+      var tags = value.tags;
+      var t2$3 = value.t2 || (presets.end - presets.start) * 1e3;
+      var compiledTag = {};
+      tags.forEach(function (t) {
+        var k = Object.keys(t)[0];
+        if (~tTags.indexOf(k) && !(k === 'clip' && !t[k].dots)) {
+          assign(compiledTag, compileTag(t, k, presets));
+        }
+      });
+      return { t: { t1: t1$3, t2: t2$3, accel: accel, tag: compiledTag } };
+    }
+    return ( obj$2 = {}, obj$2[key] = value, obj$2);
+  }
+
+  var a2an = [
+    null, 1, 2, 3,
+    null, 7, 8, 9,
+    null, 4, 5, 6 ];
+
+  var globalTags = ['r', 'a', 'an', 'pos', 'org', 'move', 'fade', 'fad', 'clip'];
+
+  function createSlice(name, styles) {
+    return {
+      name: name,
+      borderStyle: styles[name].style.BorderStyle,
+      tag: styles[name].tag,
+      fragments: [],
+    };
+  }
+
+  function compileText(ref) {
+    var styles = ref.styles;
+    var name = ref.name;
+    var parsed = ref.parsed;
+    var start = ref.start;
+    var end = ref.end;
+
+    var alignment;
+    var pos;
+    var org;
+    var move;
+    var fade;
+    var clip;
+    var slices = [];
+    var slice = createSlice(name, styles);
+    var prevTag = {};
+    for (var i = 0; i < parsed.length; i++) {
+      var ref$1 = parsed[i];
+      var tags = ref$1.tags;
+      var text = ref$1.text;
+      var drawing = ref$1.drawing;
+      var reset = (void 0);
+      for (var j = 0; j < tags.length; j++) {
+        var tag = tags[j];
+        reset = tag.r === undefined ? reset : tag.r;
+      }
+      var fragment = {
+        tag: reset === undefined ? JSON.parse(JSON.stringify(prevTag)) : {},
+        text: text,
+        drawing: drawing.length ? compileDrawing(drawing) : null,
+      };
+      for (var j$1 = 0; j$1 < tags.length; j$1++) {
+        var tag$1 = tags[j$1];
+        alignment = alignment || a2an[tag$1.a || 0] || tag$1.an;
+        pos = pos || compileTag(tag$1, 'pos');
+        org = org || compileTag(tag$1, 'org');
+        move = move || compileTag(tag$1, 'move');
+        fade = fade || compileTag(tag$1, 'fade') || compileTag(tag$1, 'fad');
+        clip = compileTag(tag$1, 'clip') || clip;
+        var key = Object.keys(tag$1)[0];
+        if (key && !~globalTags.indexOf(key)) {
+          var ref$2 = slice.tag;
+          var c1 = ref$2.c1;
+          var c2 = ref$2.c2;
+          var c3 = ref$2.c3;
+          var c4 = ref$2.c4;
+          var fs = prevTag.fs || slice.tag.fs;
+          var compiledTag = compileTag(tag$1, key, { start: start, end: end, c1: c1, c2: c2, c3: c3, c4: c4, fs: fs });
+          if (key === 't') {
+            fragment.tag.t = fragment.tag.t || [];
+            fragment.tag.t.push(compiledTag.t);
+          } else {
+            assign(fragment.tag, compiledTag);
+          }
+        }
+      }
+      prevTag = fragment.tag;
+      if (reset !== undefined) {
+        slices.push(slice);
+        slice = createSlice(styles[reset] ? reset : name, styles);
+      }
+      if (fragment.text || fragment.drawing) {
+        var prev = slice.fragments[slice.fragments.length - 1] || {};
+        if (prev.text && fragment.text && !Object.keys(fragment.tag).length) {
+          // merge fragment to previous if its tag is empty
+          prev.text += fragment.text;
+        } else {
+          slice.fragments.push(fragment);
+        }
+      }
+    }
+    slices.push(slice);
+
+    return assign({ alignment: alignment, slices: slices }, pos, org, move, fade, clip);
+  }
+
+  function compileDialogues(ref) {
+    var styles = ref.styles;
+    var dialogues = ref.dialogues;
+
+    var minLayer = Infinity;
+    var results = [];
+    for (var i = 0; i < dialogues.length; i++) {
+      var dia = dialogues[i];
+      if (dia.Start >= dia.End) {
+        continue;
+      }
+      if (!styles[dia.Style]) {
+        dia.Style = 'Default';
+      }
+      var stl = styles[dia.Style].style;
+      var compiledText = compileText({
+        styles: styles,
+        name: dia.Style,
+        parsed: dia.Text.parsed,
+        start: dia.Start,
+        end: dia.End,
+      });
+      var alignment = compiledText.alignment || stl.Alignment;
+      minLayer = Math.min(minLayer, dia.Layer);
+      results.push(assign({
+        layer: dia.Layer,
+        start: dia.Start,
+        end: dia.End,
+        // reset style by `\r` will not effect margin and alignment
+        margin: {
+          left: dia.MarginL || stl.MarginL,
+          right: dia.MarginR || stl.MarginR,
+          vertical: dia.MarginV || stl.MarginV,
+        },
+        effect: dia.Effect,
+      }, compiledText, { alignment: alignment }));
+    }
+    for (var i$1 = 0; i$1 < results.length; i$1++) {
+      results[i$1].layer -= minLayer;
+    }
+    return results.sort(function (a, b) { return a.start - b.start || a.end - b.end; });
+  }
+
+  // same as Aegisub
+  // https://github.com/Aegisub/Aegisub/blob/master/src/ass_style.h
+  var DEFAULT_STYLE = {
+    Name: 'Default',
+    Fontname: 'Arial',
+    Fontsize: '20',
+    PrimaryColour: '&H00FFFFFF&',
+    SecondaryColour: '&H000000FF&',
+    OutlineColour: '&H00000000&',
+    BackColour: '&H00000000&',
+    Bold: '0',
+    Italic: '0',
+    Underline: '0',
+    StrikeOut: '0',
+    ScaleX: '100',
+    ScaleY: '100',
+    Spacing: '0',
+    Angle: '0',
+    BorderStyle: '1',
+    Outline: '2',
+    Shadow: '2',
+    Alignment: '2',
+    MarginL: '10',
+    MarginR: '10',
+    MarginV: '10',
+    Encoding: '1',
+  };
+
+  function parseStyleColor(color) {
+    var ref = color.match(/&H(\w\w)?(\w{6})&?/);
+    var a = ref[1];
+    var c = ref[2];
+    return [a || '00', c];
+  }
+
+  function compileStyles(ref) {
+    var info = ref.info;
+    var style = ref.style;
+    var format = ref.format;
+    var defaultStyle = ref.defaultStyle;
+
+    var result = {};
+    var styles = [
+      assign({}, DEFAULT_STYLE, defaultStyle, { Name: 'Default' }) ].concat( style.map(function (stl) {
+        var s = {};
+        for (var i = 0; i < format.length; i++) {
+          s[format[i]] = stl[i];
+        }
+        return s;
+      }) );
+    var loop = function ( i ) {
+      var s = styles[i];
+      // this behavior is same as Aegisub by black-box testing
+      if (/^(\*+)Default$/.test(s.Name)) {
+        s.Name = 'Default';
+      }
+      Object.keys(s).forEach(function (key) {
+        if (key !== 'Name' && key !== 'Fontname' && !/Colour/.test(key)) {
+          s[key] *= 1;
+        }
+      });
+      var ref$1 = parseStyleColor(s.PrimaryColour);
+      var a1 = ref$1[0];
+      var c1 = ref$1[1];
+      var ref$2 = parseStyleColor(s.SecondaryColour);
+      var a2 = ref$2[0];
+      var c2 = ref$2[1];
+      var ref$3 = parseStyleColor(s.OutlineColour);
+      var a3 = ref$3[0];
+      var c3 = ref$3[1];
+      var ref$4 = parseStyleColor(s.BackColour);
+      var a4 = ref$4[0];
+      var c4 = ref$4[1];
+      var tag = {
+        fn: s.Fontname,
+        fs: s.Fontsize,
+        c1: c1,
+        a1: a1,
+        c2: c2,
+        a2: a2,
+        c3: c3,
+        a3: a3,
+        c4: c4,
+        a4: a4,
+        b: Math.abs(s.Bold),
+        i: Math.abs(s.Italic),
+        u: Math.abs(s.Underline),
+        s: Math.abs(s.StrikeOut),
+        fscx: s.ScaleX,
+        fscy: s.ScaleY,
+        fsp: s.Spacing,
+        frz: s.Angle,
+        xbord: s.Outline,
+        ybord: s.Outline,
+        xshad: s.Shadow,
+        yshad: s.Shadow,
+        q: /^[0-3]$/.test(info.WrapStyle) ? info.WrapStyle * 1 : 2,
+      };
+      result[s.Name] = { style: s, tag: tag };
+    };
+
+    for (var i = 0; i < styles.length; i++) loop( i );
+    return result;
+  }
+
+  function compile(text, options) {
+    if ( options === void 0 ) options = {};
+
+    var tree = parse(text);
+    var styles = compileStyles({
+      info: tree.info,
+      style: tree.styles.style,
+      format: tree.styles.format,
+      defaultStyle: options.defaultStyle || {},
+    });
+    return {
+      info: tree.info,
+      width: tree.info.PlayResX * 1 || null,
+      height: tree.info.PlayResY * 1 || null,
+      collisions: tree.info.Collisions || 'Normal',
+      styles: styles,
+      dialogues: compileDialogues({
+        styles: styles,
+        dialogues: tree.events.dialogue,
+      }),
+    };
+  }
+
+  var raf =
+    window.requestAnimationFrame ||
+    window.mozRequestAnimationFrame ||
+    window.webkitRequestAnimationFrame ||
+    (function (cb) { return setTimeout(cb, 50 / 3); });
+
+  var caf =
+    window.cancelAnimationFrame ||
+    window.mozCancelAnimationFrame ||
+    window.webkitCancelAnimationFrame ||
+    clearTimeout;
+
+  function color2rgba(c) {
+    var t = c.match(/(\w\w)(\w\w)(\w\w)(\w\w)/);
+    var a = 1 - ("0x" + (t[1])) / 255;
+    var b = +("0x" + (t[2]));
+    var g = +("0x" + (t[3]));
+    var r = +("0x" + (t[4]));
+    return ("rgba(" + r + "," + g + "," + b + "," + a + ")");
+  }
+
+  function uuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0;
+      var v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
     });
   }
 
-  return {
-    d: arr.join('') + 'Z',
-    minX: minX,
-    minY: minY,
-    width: maxX - minX,
-    height: maxY - minY,
-  };
-};
+  function createSVGEl(name, attrs) {
+    if ( attrs === void 0 ) attrs = [];
 
-var fontSizeCache = {};
-var $ffs = document.createElement('div');
-$ffs.className = 'ASS-fix-font-size';
-$ffs.textContent = 'M';
-var getRealFontSize = function(fs, fn) {
-  var key = fn + '-' + fs;
-  if (!fontSizeCache[key]) {
-    var cssText = 'font-size:' + fs + 'px;font-family:\'' + fn + '\',Arial;';
-    $ffs.style.cssText = cssText;
-    fontSizeCache[key] = fs * fs / $ffs.clientHeight;
+    var $el = document.createElementNS('http://www.w3.org/2000/svg', name);
+    for (var i = 0; i < attrs.length; i++) {
+      var attr = attrs[i];
+      $el.setAttributeNS(
+        attr[0] === 'xlink:href' ? 'http://www.w3.org/1999/xlink' : null,
+        attr[0],
+        attr[1]
+      );
+    }
+    return $el;
   }
-  return fontSizeCache[key];
-};
 
-var toRGBA = function(c) {
-  var t = c.match(/(\w\w)(\w\w)(\w\w)(\w\w)/),
-      a = 1 - ('0x' + t[1]) / 255,
-      b = +('0x' + t[2]),
-      g = +('0x' + t[3]),
-      r = +('0x' + t[4]);
-  return 'rgba(' + [r, g, b, a].join() + ')';
-};
+  function getVendor(prop) {
+    var ref = document.body;
+    var style = ref.style;
+    var Prop = prop.replace(/^\w/, function (x) { return x.toUpperCase(); });
+    if (prop in style) { return ''; }
+    if (("webkit" + Prop) in style) { return '-webkit-'; }
+    if (("moz" + Prop) in style) { return '-moz-'; }
+    return '';
+  }
 
-var createTransform = function(t) {
-  // TODO: I don't know why perspective is 314, it just performances well.
-  var arr = [];
-  arr.push('perspective(314px)');
-  arr.push('rotateY(' + (t.fry || 0) + 'deg)');
-  arr.push('rotateX(' + (t.frx || 0) + 'deg)');
-  arr.push('rotateZ(' + (-t.frz || 0) + 'deg)');
-  arr.push('scale(' + (t.p ? 1 : (t.fscx || 100) / 100) + ',' +
-                      (t.p ? 1 : (t.fscy || 100) / 100) + ')');
-  arr.push('skew(' + (t.fax || 0) + 'rad,' + (t.fay || 0) + 'rad)');
-  return arr.join(' ');
-};
+  var vendor = {
+    transform: getVendor('transform'),
+    animation: getVendor('animation'),
+    clipPath: getVendor('clipPath'),
+  };
 
-return ASS;
-}));
+  var strokeTags = ['c3', 'a3', 'c4', 'a4', 'xbord', 'ybord', 'xshad', 'yshad', 'blur', 'be'];
+  var transformTags = ['fscx', 'fscy', 'frx', 'fry', 'frz', 'fax', 'fay'];
+
+  function createClipPath(clip) {
+    var sw = this._.scriptRes.width;
+    var sh = this._.scriptRes.height;
+    var d = '';
+    if (clip.dots !== null) {
+      var ref = clip.dots;
+      var x1 = ref.x1;
+      var y1 = ref.y1;
+      var x2 = ref.x2;
+      var y2 = ref.y2;
+      x1 /= sw;
+      y1 /= sh;
+      x2 /= sw;
+      y2 /= sh;
+      d = "M" + x1 + "," + y1 + "L" + x1 + "," + y2 + "," + x2 + "," + y2 + "," + x2 + "," + y1 + "Z";
+    }
+    if (clip.drawing !== null) {
+      d = clip.drawing.instructions.map(function (ref) {
+        var type = ref.type;
+        var points = ref.points;
+
+        return (
+        type + points.map(function (ref) {
+          var x = ref.x;
+          var y = ref.y;
+
+          return ((x / sw) + "," + (y / sh));
+        }).join(',')
+      );
+      }).join('');
+    }
+    var scale = 1 / (1 << (clip.scale - 1));
+    if (clip.inverse) {
+      d += "M0,0L0," + scale + "," + scale + "," + scale + "," + scale + ",0,0,0Z";
+    }
+    var id = "ASS-" + (uuid());
+    var $clipPath = createSVGEl('clipPath', [
+      ['id', id],
+      ['clipPathUnits', 'objectBoundingBox'] ]);
+    $clipPath.appendChild(createSVGEl('path', [
+      ['d', d],
+      ['transform', ("scale(" + scale + ")")],
+      ['clip-rule', 'evenodd'] ]));
+    this._.$defs.appendChild($clipPath);
+    return {
+      $clipPath: $clipPath,
+      cssText: ((vendor.clipPath) + "clip-path:url(#" + id + ");"),
+    };
+  }
+
+  function setClipPath(dialogue) {
+    if (!dialogue.clip) {
+      return;
+    }
+    var $fobb = document.createElement('div');
+    this._.$stage.insertBefore($fobb, dialogue.$div);
+    $fobb.appendChild(dialogue.$div);
+    $fobb.className = 'ASS-fix-objectBoundingBox';
+    var ref = createClipPath.call(this, dialogue.clip);
+    var cssText = ref.cssText;
+    var $clipPath = ref.$clipPath;
+    this._.$defs.appendChild($clipPath);
+    $fobb.style.cssText = cssText;
+    assign(dialogue, { $div: $fobb, $clipPath: $clipPath });
+  }
+
+  var $fixFontSize = document.createElement('div');
+  $fixFontSize.className = 'ASS-fix-font-size';
+  $fixFontSize.textContent = 'M';
+
+  var cache = Object.create(null);
+
+  function getRealFontSize(fn, fs) {
+    var key = fn + "-" + fs;
+    if (!cache[key]) {
+      $fixFontSize.style.cssText = "font-size:" + fs + "px;font-family:\"" + fn + "\",Arial;";
+      cache[key] = fs * fs / $fixFontSize.clientHeight;
+    }
+    return cache[key];
+  }
+
+  function createSVGStroke(tag, id, scale) {
+    var hasBorder = tag.xbord || tag.ybord;
+    var hasShadow = tag.xshad || tag.yshad;
+    var isOpaque = tag.a1 !== 'FF';
+    var blur = tag.blur || tag.be || 0;
+    var $filter = createSVGEl('filter', [['id', id]]);
+    $filter.appendChild(createSVGEl('feGaussianBlur', [
+      ['stdDeviation', hasBorder ? 0 : blur],
+      ['in', 'SourceGraphic'],
+      ['result', 'sg_b'] ]));
+    $filter.appendChild(createSVGEl('feFlood', [
+      ['flood-color', color2rgba(tag.a1 + tag.c1)],
+      ['result', 'c1'] ]));
+    $filter.appendChild(createSVGEl('feComposite', [
+      ['operator', 'in'],
+      ['in', 'c1'],
+      ['in2', 'sg_b'],
+      ['result', 'main'] ]));
+    if (hasBorder) {
+      $filter.appendChild(createSVGEl('feMorphology', [
+        ['radius', ((tag.xbord * scale) + " " + (tag.ybord * scale))],
+        ['operator', 'dilate'],
+        ['in', 'SourceGraphic'],
+        ['result', 'dil'] ]));
+      $filter.appendChild(createSVGEl('feGaussianBlur', [
+        ['stdDeviation', blur],
+        ['in', 'dil'],
+        ['result', 'dil_b'] ]));
+      $filter.appendChild(createSVGEl('feComposite', [
+        ['operator', 'out'],
+        ['in', 'dil_b'],
+        ['in2', 'SourceGraphic'],
+        ['result', 'dil_b_o'] ]));
+      $filter.appendChild(createSVGEl('feFlood', [
+        ['flood-color', color2rgba(tag.a3 + tag.c3)],
+        ['result', 'c3'] ]));
+      $filter.appendChild(createSVGEl('feComposite', [
+        ['operator', 'in'],
+        ['in', 'c3'],
+        ['in2', 'dil_b_o'],
+        ['result', 'border'] ]));
+    }
+    if (hasShadow && (hasBorder || isOpaque)) {
+      $filter.appendChild(createSVGEl('feOffset', [
+        ['dx', tag.xshad * scale],
+        ['dy', tag.yshad * scale],
+        ['in', hasBorder ? 'dil' : 'SourceGraphic'],
+        ['result', 'off'] ]));
+      $filter.appendChild(createSVGEl('feGaussianBlur', [
+        ['stdDeviation', blur],
+        ['in', 'off'],
+        ['result', 'off_b'] ]));
+      if (!isOpaque) {
+        $filter.appendChild(createSVGEl('feOffset', [
+          ['dx', tag.xshad * scale],
+          ['dy', tag.yshad * scale],
+          ['in', 'SourceGraphic'],
+          ['result', 'sg_off'] ]));
+        $filter.appendChild(createSVGEl('feComposite', [
+          ['operator', 'out'],
+          ['in', 'off_b'],
+          ['in2', 'sg_off'],
+          ['result', 'off_b_o'] ]));
+      }
+      $filter.appendChild(createSVGEl('feFlood', [
+        ['flood-color', color2rgba(tag.a4 + tag.c4)],
+        ['result', 'c4'] ]));
+      $filter.appendChild(createSVGEl('feComposite', [
+        ['operator', 'in'],
+        ['in', 'c4'],
+        ['in2', isOpaque ? 'off_b' : 'off_b_o'],
+        ['result', 'shadow'] ]));
+    }
+    var $merge = createSVGEl('feMerge', []);
+    if (hasShadow && (hasBorder || isOpaque)) {
+      $merge.appendChild(createSVGEl('feMergeNode', [['in', 'shadow']]));
+    }
+    if (hasBorder) {
+      $merge.appendChild(createSVGEl('feMergeNode', [['in', 'border']]));
+    }
+    $merge.appendChild(createSVGEl('feMergeNode', [['in', 'main']]));
+    $filter.appendChild($merge);
+    return $filter;
+  }
+
+  function createCSSStroke(tag, scale) {
+    var arr = [];
+    var oc = color2rgba(tag.a3 + tag.c3);
+    var ox = tag.xbord * scale;
+    var oy = tag.ybord * scale;
+    var sc = color2rgba(tag.a4 + tag.c4);
+    var sx = tag.xshad * scale;
+    var sy = tag.yshad * scale;
+    var blur = tag.blur || tag.be || 0;
+    if (!(ox + oy + sx + sy)) { return 'none'; }
+    if (ox || oy) {
+      for (var i = -1; i <= 1; i++) {
+        for (var j = -1; j <= 1; j++) {
+          for (var x = 1; x < ox; x++) {
+            for (var y = 1; y < oy; y++) {
+              if (i || j) {
+                arr.push((oc + " " + (i * x) + "px " + (j * y) + "px " + blur + "px"));
+              }
+            }
+          }
+          arr.push((oc + " " + (i * ox) + "px " + (j * oy) + "px " + blur + "px"));
+        }
+      }
+    }
+    if (sx || sy) {
+      var pnx = sx > 0 ? 1 : -1;
+      var pny = sy > 0 ? 1 : -1;
+      sx = Math.abs(sx);
+      sy = Math.abs(sy);
+      for (var x$1 = Math.max(ox, sx - ox); x$1 < sx + ox; x$1++) {
+        for (var y$1 = Math.max(oy, sy - oy); y$1 < sy + oy; y$1++) {
+          arr.push((sc + " " + (x$1 * pnx) + "px " + (y$1 * pny) + "px " + blur + "px"));
+        }
+      }
+      arr.push((sc + " " + ((sx + ox) * pnx) + "px " + ((sy + oy) * pny) + "px " + blur + "px"));
+    }
+    return arr.join();
+  }
+
+  function createTransform(tag) {
+    return [
+      // TODO: I don't know why perspective is 314, it just performances well.
+      'perspective(314px)',
+      ("rotateY(" + (tag.fry || 0) + "deg)"),
+      ("rotateX(" + (tag.frx || 0) + "deg)"),
+      ("rotateZ(" + (-tag.frz || 0) + "deg)"),
+      ("scale(" + (tag.p ? 1 : (tag.fscx || 100) / 100) + "," + (tag.p ? 1 : (tag.fscy || 100) / 100) + ")"),
+      ("skew(" + (tag.fax || 0) + "rad," + (tag.fay || 0) + "rad)") ].join(' ');
+  }
+
+  function setTransformOrigin(dialogue) {
+    var alignment = dialogue.alignment;
+    var width = dialogue.width;
+    var height = dialogue.height;
+    var x = dialogue.x;
+    var y = dialogue.y;
+    var $div = dialogue.$div;
+    var org = dialogue.org;
+    if (!org) {
+      org = { x: 0, y: 0 };
+      if (alignment % 3 === 1) { org.x = x; }
+      if (alignment % 3 === 2) { org.x = x + width / 2; }
+      if (alignment % 3 === 0) { org.x = x + width; }
+      if (alignment <= 3) { org.y = y + height; }
+      if (alignment >= 4 && alignment <= 6) { org.y = y + height / 2; }
+      if (alignment >= 7) { org.y = y; }
+    }
+    for (var i = $div.childNodes.length - 1; i >= 0; i--) {
+      var node = $div.childNodes[i];
+      if (node.dataset.hasRotate === 'true') {
+        // It's not extremely precise for offsets are round the value to an integer.
+        var tox = org.x - x - node.offsetLeft;
+        var toy = org.y - y - node.offsetTop;
+        node.style.cssText += (vendor.transform) + "transform-origin:" + tox + "px " + toy + "px;";
+      }
+    }
+  }
+
+  function getKeyframeString(name, list) {
+    return ("@" + (vendor.animation) + "keyframes " + name + " {" + list + "}\n");
+  }
+
+  var KeyframeBlockList = function KeyframeBlockList() {
+    this.obj = {};
+  };
+  KeyframeBlockList.prototype.set = function set (keyText, prop, value) {
+    if (!this.obj[keyText]) { this.obj[keyText] = {}; }
+    this.obj[keyText][prop] = value;
+  };
+  KeyframeBlockList.prototype.setT = function setT (ref) {
+      var t1 = ref.t1;
+      var t2 = ref.t2;
+      var duration = ref.duration;
+      var prop = ref.prop;
+      var from = ref.from;
+      var to = ref.to;
+
+    this.set('0.000%', prop, from);
+    if (t1 < duration) {
+      this.set((((t1 / duration * 100).toFixed(3)) + "%"), prop, from);
+    }
+    if (t2 < duration) {
+      this.set((((t2 / duration * 100).toFixed(3)) + "%"), prop, to);
+    }
+    this.set('100.000%', prop, to);
+  };
+  KeyframeBlockList.prototype.toString = function toString () {
+      var this$1 = this;
+
+    return Object.keys(this.obj)
+      .map(function (keyText) { return (
+        (keyText + "{" + (Object.keys(this$1.obj[keyText])
+            .map(function (prop) { return ("" + (vendor[prop] || '') + prop + ":" + (this$1.obj[keyText][prop]) + ";"); })
+            .join('')) + "}")
+      ); })
+      .join('');
+  };
+
+  // TODO: multi \t can't be merged directly
+  function mergeT(ts) {
+    return ts.reduceRight(function (results, t) {
+      var merged = false;
+      return results
+        .map(function (r) {
+          merged = t.t1 === r.t1 && t.t2 === r.t2 && t.accel === r.accel;
+          return assign({}, r, merged ? { tag: assign({}, r.tag, t.tag) } : {});
+        })
+        .concat(merged ? [] : t);
+    }, []);
+  }
+
+  function getKeyframes() {
+    var this$1 = this;
+
+    var keyframes = '';
+    this.dialogues.forEach(function (dialogue) {
+      var start = dialogue.start;
+      var end = dialogue.end;
+      var effect = dialogue.effect;
+      var move = dialogue.move;
+      var fade = dialogue.fade;
+      var slices = dialogue.slices;
+      var duration = (end - start) * 1000;
+      var diaKbl = new KeyframeBlockList();
+      // TODO: when effect and move both exist, its behavior is weird, for now only move works.
+      if (effect && !move) {
+        var name = effect.name;
+        var delay = effect.delay;
+        var lefttoright = effect.lefttoright;
+        var y1 = effect.y1;
+        var y2 = effect.y2 || this$1._.resampledRes.height;
+        if (name === 'banner') {
+          var tx = this$1.scale * (duration / delay) * (lefttoright ? 1 : -1);
+          diaKbl.set('0.000%', 'transform', 'translateX(0)');
+          diaKbl.set('100.000%', 'transform', ("translateX(" + tx + "px)"));
+        }
+        if (/^scroll/.test(name)) {
+          var updown = /up/.test(name) ? -1 : 1;
+          var tFrom = "translateY(" + (this$1.scale * y1 * updown) + "px)";
+          var tTo = "translateY(" + (this$1.scale * y2 * updown) + "px)";
+          var dp = (y2 - y1) / (duration / delay) * 100;
+          diaKbl.set('0.000%', 'transform', tFrom);
+          if (dp < 100) {
+            diaKbl.set(((dp.toFixed(3)) + "%"), 'transform', tTo);
+          }
+          diaKbl.set('100.000%', 'transform', tTo);
+        }
+      }
+      if (move) {
+        var x1 = move.x1;
+        var y1$1 = move.y1;
+        var x2 = move.x2;
+        var y2$1 = move.y2;
+        var t1 = move.t1;
+        var t2 = move.t2 || duration;
+        var pos = dialogue.pos || { x: 0, y: 0 };
+        var values = [{ x: x1, y: y1$1 }, { x: x2, y: y2$1 }].map(function (ref) {
+          var x = ref.x;
+          var y = ref.y;
+
+          return (
+          ("translate(" + (this$1.scale * (x - pos.x)) + "px, " + (this$1.scale * (y - pos.y)) + "px)")
+        );
+        });
+        diaKbl.setT({ t1: t1, t2: t2, duration: duration, prop: 'transform', from: values[0], to: values[1] });
+      }
+      if (fade) {
+        if (fade.type === 'fad') {
+          var t1$1 = fade.t1;
+          var t2$1 = fade.t2;
+          diaKbl.set('0.000%', 'opacity', 0);
+          if (t1$1 < duration) {
+            diaKbl.set((((t1$1 / duration * 100).toFixed(3)) + "%"), 'opacity', 1);
+            if (t1$1 + t2$1 < duration) {
+              diaKbl.set(((((duration - t2$1) / duration * 100).toFixed(3)) + "%"), 'opacity', 1);
+            }
+            diaKbl.set('100.000%', 'opacity', 0);
+          } else {
+            diaKbl.set('100.000%', 'opacity', duration / t1$1);
+          }
+        } else {
+          var a1 = fade.a1;
+          var a2 = fade.a2;
+          var a3 = fade.a3;
+          var t1$2 = fade.t1;
+          var t2$2 = fade.t2;
+          var t3 = fade.t3;
+          var t4 = fade.t4;
+          var keyTexts = [t1$2, t2$2, t3, t4].map(function (t) { return (((t / duration * 100).toFixed(3)) + "%"); });
+          var values$1 = [a1, a2, a3].map(function (a) { return 1 - a / 255; });
+          diaKbl.set('0.000%', 'opacity', values$1[0]);
+          if (t1$2 < duration) { diaKbl.set(keyTexts[0], 'opacity', values$1[0]); }
+          if (t2$2 < duration) { diaKbl.set(keyTexts[1], 'opacity', values$1[1]); }
+          if (t3 < duration) { diaKbl.set(keyTexts[2], 'opacity', values$1[1]); }
+          if (t4 < duration) { diaKbl.set(keyTexts[3], 'opacity', values$1[2]); }
+          diaKbl.set('100.000%', 'opacity', values$1[2]);
+        }
+      }
+      var diaList = diaKbl.toString();
+      if (diaList) {
+        assign(dialogue, { animationName: ("ASS-" + (uuid())) });
+        keyframes += getKeyframeString(dialogue.animationName, diaList);
+      }
+      slices.forEach(function (slice) {
+        slice.fragments.forEach(function (fragment) {
+          if (!fragment.tag.t || !fragment.tag.t.length) {
+            return;
+          }
+          var kbl = new KeyframeBlockList();
+          var fromTag = assign({}, slice.tag, fragment.tag);
+          // TODO: accel is not implemented yet
+          mergeT(fragment.tag.t).forEach(function (ref) {
+            var t1 = ref.t1;
+            var t2 = ref.t2;
+            var tag = ref.tag;
+
+            if (tag.fs) {
+              var from = (this$1.scale * getRealFontSize(fromTag.fn, fromTag.fs)) + "px";
+              var to = (this$1.scale * getRealFontSize(tag.fn, fromTag.fs)) + "px";
+              kbl.setT({ t1: t1, t2: t2, duration: duration, prop: 'font-size', from: from, to: to });
+            }
+            if (tag.fsp) {
+              var from$1 = (this$1.scale * fromTag.fsp) + "px";
+              var to$1 = (this$1.scale * tag.fsp) + "px";
+              kbl.setT({ t1: t1, t2: t2, duration: duration, prop: 'letter-spacing', from: from$1, to: to$1 });
+            }
+            var hasAlpha = (
+              tag.a1 !== undefined &&
+              tag.a1 === tag.a2 &&
+              tag.a2 === tag.a3 &&
+              tag.a3 === tag.a4
+            );
+            if (tag.c1 || (tag.a1 && !hasAlpha)) {
+              var from$2 = color2rgba(fromTag.a1 + fromTag.c1);
+              var to$2 = color2rgba((tag.a1 || fromTag.a1) + (tag.c1 || fromTag.c1));
+              kbl.setT({ t1: t1, t2: t2, duration: duration, prop: 'color', from: from$2, to: to$2 });
+            }
+            if (hasAlpha) {
+              var from$3 = 1 - parseInt(fromTag.a1, 16) / 255;
+              var to$3 = 1 - parseInt(tag.a1, 16) / 255;
+              kbl.setT({ t1: t1, t2: t2, duration: duration, prop: 'opacity', from: from$3, to: to$3 });
+            }
+            var hasStroke = strokeTags.some(function (x) { return (
+              tag[x] !== undefined &&
+              tag[x] !== (fragment.tag[x] || slice.tag[x])
+            ); });
+            if (hasStroke) {
+              var scale = /Yes/i.test(this$1.info.ScaledBorderAndShadow) ? this$1.scale : 1;
+              var from$4 = createCSSStroke(fromTag, scale);
+              var to$4 = createCSSStroke(assign({}, fromTag, tag), scale);
+              kbl.setT({ t1: t1, t2: t2, duration: duration, prop: 'text-shadow', from: from$4, to: to$4 });
+            }
+            var hasTransfrom = transformTags.some(function (x) { return (
+              tag[x] !== undefined &&
+              tag[x] !== (fragment.tag[x] || slice.tag[x])
+            ); });
+            if (hasTransfrom) {
+              var toTag = assign({}, fromTag, tag);
+              if (fragment.drawing) {
+                // scales will be handled inside svg
+                assign(toTag, {
+                  p: 0,
+                  fscx: ((tag.fscx || fromTag.fscx) / fromTag.fscx) * 100,
+                  fscy: ((tag.fscy || fromTag.fscy) / fromTag.fscy) * 100,
+                });
+                assign(fromTag, { fscx: 100, fscy: 100 });
+              }
+              var from$5 = createTransform(fromTag);
+              var to$5 = createTransform(toTag);
+              kbl.setT({ t1: t1, t2: t2, duration: duration, prop: 'transform', from: from$5, to: to$5 });
+            }
+          });
+          var list = kbl.toString();
+          assign(fragment, { animationName: ("ASS-" + (uuid())) });
+          keyframes += getKeyframeString(fragment.animationName, list);
+        });
+      });
+    });
+    return keyframes;
+  }
+
+  function createAnimation(name, duration, delay) {
+    var va = vendor.animation;
+    return (
+      va + "animation-name:" + name + ";" +
+      va + "animation-duration:" + duration + "s;" +
+      va + "animation-delay:" + delay + "s;" +
+      va + "animation-timing-function:linear;" +
+      va + "animation-iteration-count:1;" +
+      va + "animation-fill-mode:forwards;"
+    );
+  }
+
+  function createDrawing(fragment, styleTag) {
+    var tag = assign({}, styleTag, fragment.tag);
+    var ref = fragment.drawing;
+    var minX = ref.minX;
+    var minY = ref.minY;
+    var width = ref.width;
+    var height = ref.height;
+    var baseScale = this.scale / (1 << (tag.p - 1));
+    var scaleX = (tag.fscx ? tag.fscx / 100 : 1) * baseScale;
+    var scaleY = (tag.fscy ? tag.fscy / 100 : 1) * baseScale;
+    var blur = tag.blur || tag.be || 0;
+    var vbx = tag.xbord + (tag.xshad < 0 ? -tag.xshad : 0) + blur;
+    var vby = tag.ybord + (tag.yshad < 0 ? -tag.yshad : 0) + blur;
+    var vbw = width * scaleX + 2 * tag.xbord + Math.abs(tag.xshad) + 2 * blur;
+    var vbh = height * scaleY + 2 * tag.ybord + Math.abs(tag.yshad) + 2 * blur;
+    var $svg = createSVGEl('svg', [
+      ['width', vbw],
+      ['height', vbh],
+      ['viewBox', ((-vbx) + " " + (-vby) + " " + vbw + " " + vbh)] ]);
+    var strokeScale = /Yes/i.test(this.info.ScaledBorderAndShadow) ? this.scale : 1;
+    var filterId = "ASS-" + (uuid());
+    var $defs = createSVGEl('defs');
+    $defs.appendChild(createSVGStroke(tag, filterId, strokeScale));
+    $svg.appendChild($defs);
+    var symbolId = "ASS-" + (uuid());
+    var $symbol = createSVGEl('symbol', [
+      ['id', symbolId],
+      ['viewBox', (minX + " " + minY + " " + width + " " + height)] ]);
+    $symbol.appendChild(createSVGEl('path', [['d', fragment.drawing.d]]));
+    $svg.appendChild($symbol);
+    $svg.appendChild(createSVGEl('use', [
+      ['width', width * scaleX],
+      ['height', height * scaleY],
+      ['xlink:href', ("#" + symbolId)],
+      ['filter', ("url(#" + filterId + ")")] ]));
+    $svg.style.cssText = (
+      'position:absolute;' +
+      "left:" + (minX * scaleX - vbx) + "px;" +
+      "top:" + (minY * scaleY - vby) + "px;"
+    );
+    return {
+      $svg: $svg,
+      cssText: ("position:relative;width:" + (width * scaleX) + "px;height:" + (height * scaleY) + "px;"),
+    };
+  }
+
+  function encodeText(text, q) {
+    return text
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\s/g, '&nbsp;')
+      .replace(/\\h/g, '&nbsp;')
+      .replace(/\\N/g, '<br>')
+      .replace(/\\n/g, q === 2 ? '<br>' : '&nbsp;');
+  }
+
+  function createDialogue(dialogue) {
+    var this$1 = this;
+
+    var $div = document.createElement('div');
+    $div.className = 'ASS-dialogue';
+    var df = document.createDocumentFragment();
+    var slices = dialogue.slices;
+    var start = dialogue.start;
+    var end = dialogue.end;
+    slices.forEach(function (slice) {
+      var borderStyle = slice.borderStyle;
+      slice.fragments.forEach(function (fragment) {
+        var text = fragment.text;
+        var drawing = fragment.drawing;
+        var animationName = fragment.animationName;
+        var tag = assign({}, slice.tag, fragment.tag);
+        var cssText = 'display:inline-block;';
+        var vct = this$1.video.currentTime;
+        if (!drawing) {
+          cssText += "font-family:\"" + (tag.fn) + "\",Arial;";
+          cssText += "font-size:" + (this$1.scale * getRealFontSize(tag.fn, tag.fs)) + "px;";
+          cssText += "color:" + (color2rgba(tag.a1 + tag.c1)) + ";";
+          var scale = /Yes/i.test(this$1.info.ScaledBorderAndShadow) ? this$1.scale : 1;
+          if (borderStyle === 1) {
+            cssText += "text-shadow:" + (createCSSStroke(tag, scale)) + ";";
+          }
+          if (borderStyle === 3) {
+            cssText += (
+              "background-color:" + (color2rgba(tag.a3 + tag.c3)) + ";" +
+              "box-shadow:" + (createCSSStroke(tag, scale)) + ";"
+            );
+          }
+          cssText += tag.b ? ("font-weight:" + (tag.b === 1 ? 'bold' : tag.b) + ";") : '';
+          cssText += tag.i ? 'font-style:italic;' : '';
+          cssText += (tag.u || tag.s) ? ("text-decoration:" + (tag.u ? 'underline' : '') + " " + (tag.s ? 'line-through' : '') + ";") : '';
+          cssText += tag.fsp ? ("letter-spacing:" + (tag.fsp) + "px;") : '';
+          // TODO: (tag.q === 0) and (tag.q === 3) are not implemented yet,
+          // for now just handle it as (tag.q === 1)
+          if (tag.q === 1 || tag.q === 0 || tag.q === 3) {
+            cssText += 'word-break:break-all;white-space:normal;';
+          }
+          if (tag.q === 2) {
+            cssText += 'word-break:normal;white-space:nowrap;';
+          }
+        }
+        var hasTransfrom = transformTags.some(function (x) { return (
+          /^fsc[xy]$/.test(x) ? tag[x] !== 100 : !!tag[x]
+        ); });
+        if (hasTransfrom) {
+          cssText += (vendor.transform) + "transform:" + (createTransform(tag)) + ";";
+          if (!drawing) {
+            cssText += 'transform-style:preserve-3d;word-break:normal;white-space:nowrap;';
+          }
+        }
+        if (animationName) {
+          cssText += createAnimation(animationName, end - start, Math.min(0, start - vct));
+        }
+        if (drawing && tag.pbo) {
+          var pbo = this$1.scale * -tag.pbo * (tag.fscy || 100) / 100;
+          cssText += "vertical-align:" + pbo + "px;";
+        }
+
+        var hasRotate = /"fr[xyz]":[^0]/.test(JSON.stringify(tag));
+        encodeText(text, tag.q).split('<br>').forEach(function (html, idx) {
+          var $span = document.createElement('span');
+          $span.dataset.hasRotate = hasRotate;
+          if (drawing) {
+            var obj = createDrawing.call(this$1, fragment, slice.tag);
+            $span.style.cssText = obj.cssText;
+            $span.appendChild(obj.$svg);
+          } else {
+            if (idx) {
+              df.appendChild(document.createElement('br'));
+            }
+            if (!html) {
+              return;
+            }
+            $span.innerHTML = html;
+          }
+          // TODO: maybe it can be optimized
+          $span.style.cssText += cssText;
+          df.appendChild($span);
+        });
+      });
+    });
+    $div.appendChild(df);
+    return $div;
+  }
+
+  function allocate(dialogue) {
+    var layer = dialogue.layer;
+    var margin = dialogue.margin;
+    var width = dialogue.width;
+    var height = dialogue.height;
+    var alignment = dialogue.alignment;
+    var end = dialogue.end;
+    var stageWidth = this.width - (this.scale * (margin.left + margin.right) | 0);
+    var stageHeight = this.height;
+    var vertical = this.scale * margin.vertical | 0;
+    var vct = this.video.currentTime * 100;
+    this._.space[layer] = this._.space[layer] || {
+      left: { width: new Uint16Array(stageHeight + 1), end: new Uint16Array(stageHeight + 1) },
+      center: { width: new Uint16Array(stageHeight + 1), end: new Uint16Array(stageHeight + 1) },
+      right: { width: new Uint16Array(stageHeight + 1), end: new Uint16Array(stageHeight + 1) },
+    };
+    var channel = this._.space[layer];
+    var align = ['right', 'left', 'center'][alignment % 3];
+    var willCollide = function (y) {
+      var lw = channel.left.width[y];
+      var cw = channel.center.width[y];
+      var rw = channel.right.width[y];
+      var le = channel.left.end[y];
+      var ce = channel.center.end[y];
+      var re = channel.right.end[y];
+      return (
+        (align === 'left' && (
+          (le > vct && lw) ||
+          (ce > vct && cw && 2 * width + cw > stageWidth) ||
+          (re > vct && rw && width + rw > stageWidth)
+        )) ||
+        (align === 'center' && (
+          (le > vct && lw && 2 * lw + width > stageWidth) ||
+          (ce > vct && cw) ||
+          (re > vct && rw && 2 * rw + width > stageWidth)
+        )) ||
+        (align === 'right' && (
+          (le > vct && lw && lw + width > stageWidth) ||
+          (ce > vct && cw && 2 * width + cw > stageWidth) ||
+          (re > vct && rw)
+        ))
+      );
+    };
+    var count = 0;
+    var result = 0;
+    var find = function (y) {
+      count = willCollide(y) ? 0 : count + 1;
+      if (count >= height) {
+        result = y;
+        return true;
+      }
+      return false;
+    };
+    if (alignment <= 3) {
+      for (var i = stageHeight - vertical - 1; i > vertical; i--) {
+        if (find(i)) { break; }
+      }
+    } else if (alignment >= 7) {
+      for (var i$1 = vertical + 1; i$1 < stageHeight - vertical; i$1++) {
+        if (find(i$1)) { break; }
+      }
+    } else {
+      for (var i$2 = (stageHeight - height) >> 1; i$2 < stageHeight - vertical; i$2++) {
+        if (find(i$2)) { break; }
+      }
+    }
+    if (alignment > 3) {
+      result -= height - 1;
+    }
+    for (var i$3 = result; i$3 < result + height; i$3++) {
+      channel[align].width[i$3] = width;
+      channel[align].end[i$3] = end * 100;
+    }
+    return result;
+  }
+
+  function getPosition(dialogue) {
+    var effect = dialogue.effect;
+    var move = dialogue.move;
+    var alignment = dialogue.alignment;
+    var width = dialogue.width;
+    var height = dialogue.height;
+    var margin = dialogue.margin;
+    var slices = dialogue.slices;
+    var x = 0;
+    var y = 0;
+    if (effect) {
+      if (effect.name === 'banner') {
+        if (alignment <= 3) { y = this.height - height - margin.vertical; }
+        if (alignment >= 4 && alignment <= 6) { y = (this.height - height) / 2; }
+        if (alignment >= 7) { y = margin.vertical; }
+        x = effect.lefttoright ? -width : this.width;
+      }
+    } else if (dialogue.pos || move) {
+      var pos = dialogue.pos || { x: 0, y: 0 };
+      if (alignment % 3 === 1) { x = this.scale * pos.x; }
+      if (alignment % 3 === 2) { x = this.scale * pos.x - width / 2; }
+      if (alignment % 3 === 0) { x = this.scale * pos.x - width; }
+      if (alignment <= 3) { y = this.scale * pos.y - height; }
+      if (alignment >= 4 && alignment <= 6) { y = this.scale * pos.y - height / 2; }
+      if (alignment >= 7) { y = this.scale * pos.y; }
+    } else {
+      if (alignment % 3 === 1) { x = 0; }
+      if (alignment % 3 === 2) { x = (this.width - width) / 2; }
+      if (alignment % 3 === 0) { x = this.width - width - this.scale * margin.right; }
+      var hasT = slices.some(function (slice) { return (
+        slice.fragments.some(function (ref) {
+          var animationName = ref.animationName;
+
+          return animationName;
+        })
+      ); });
+      if (hasT) {
+        if (alignment <= 3) { y = this.height - height - margin.vertical; }
+        if (alignment >= 4 && alignment <= 6) { y = (this.height - height) / 2; }
+        if (alignment >= 7) { y = margin.vertical; }
+      } else {
+        y = allocate.call(this, dialogue);
+      }
+    }
+    return { x: x, y: y };
+  }
+
+  function createStyle(dialogue) {
+    var layer = dialogue.layer;
+    var start = dialogue.start;
+    var end = dialogue.end;
+    var alignment = dialogue.alignment;
+    var effect = dialogue.effect;
+    var pos = dialogue.pos;
+    var margin = dialogue.margin;
+    var animationName = dialogue.animationName;
+    var width = dialogue.width;
+    var height = dialogue.height;
+    var x = dialogue.x;
+    var y = dialogue.y;
+    var vct = this.video.currentTime;
+    var cssText = '';
+    if (layer) { cssText += "z-index:" + layer + ";"; }
+    if (animationName) {
+      cssText += createAnimation(animationName, end - start, Math.min(0, start - vct));
+    }
+    cssText += "text-align:" + (['right', 'left', 'center'][alignment % 3]) + ";";
+    if (!effect) {
+      var mw = this.width - this.scale * (margin.left + margin.right);
+      cssText += "max-width:" + mw + "px;";
+      if (!pos) {
+        if (alignment % 3 === 1) {
+          cssText += "margin-left:" + (this.scale * margin.left) + "px;";
+        }
+        if (alignment % 3 === 0) {
+          cssText += "margin-right:" + (this.scale * margin.right) + "px;";
+        }
+        if (width > this.width - this.scale * (margin.left + margin.right)) {
+          cssText += "margin-left:" + (this.scale * margin.left) + "px;";
+          cssText += "margin-right:" + (this.scale * margin.right) + "px;";
+        }
+      }
+    }
+    cssText += "width:" + width + "px;height:" + height + "px;left:" + x + "px;top:" + y + "px;";
+    return cssText;
+  }
+
+  function renderer(dialogue) {
+    var $div = createDialogue.call(this, dialogue);
+    assign(dialogue, { $div: $div });
+    this._.$stage.appendChild($div);
+    var ref = $div.getBoundingClientRect();
+    var width = ref.width;
+    var height = ref.height;
+    assign(dialogue, { width: width, height: height });
+    assign(dialogue, getPosition.call(this, dialogue));
+    $div.style.cssText = createStyle.call(this, dialogue);
+    setTransformOrigin(dialogue);
+    setClipPath.call(this, dialogue);
+    return dialogue;
+  }
+
+  function framing() {
+    var this$1 = this;
+
+    var vct = this.video.currentTime;
+    for (var i = this._.stagings.length - 1; i >= 0; i--) {
+      var dia = this$1._.stagings[i];
+      var end = dia.end;
+      if (dia.effect && /scroll/.test(dia.effect.name)) {
+        var ref = dia.effect;
+        var y1 = ref.y1;
+        var y2 = ref.y2;
+        var delay = ref.delay;
+        var duration = ((y2 || this$1._.resampledRes.height) - y1) / (1000 / delay);
+        end = Math.min(end, dia.start + duration);
+      }
+      if (end < vct) {
+        this$1._.$stage.removeChild(dia.$div);
+        if (dia.$clipPath) {
+          this$1._.$defs.removeChild(dia.$clipPath);
+        }
+        this$1._.stagings.splice(i, 1);
+      }
+    }
+    var dias = this.dialogues;
+    while (
+      this._.index < dias.length &&
+      vct >= dias[this._.index].start
+    ) {
+      if (vct < dias[this$1._.index].end) {
+        var dia$1 = renderer.call(this$1, dias[this$1._.index]);
+        this$1._.stagings.push(dia$1);
+      }
+      ++this$1._.index;
+    }
+  }
+
+  function play() {
+    var this$1 = this;
+
+    var frame = function () {
+      framing.call(this$1);
+      this$1._.requestId = raf(frame);
+    };
+    this._.requestId = raf(frame);
+    this._.$stage.classList.remove('ASS-animation-paused');
+    return this;
+  }
+
+  function pause() {
+    caf(this._.requestId);
+    this._.requestId = 0;
+    this._.$stage.classList.add('ASS-animation-paused');
+    return this;
+  }
+
+  function clear() {
+    var this$1 = this;
+
+    while (this._.$stage.lastChild) {
+      this$1._.$stage.removeChild(this$1._.$stage.lastChild);
+    }
+    while (this._.$defs.lastChild) {
+      this$1._.$defs.removeChild(this$1._.$defs.lastChild);
+    }
+    this._.stagings = [];
+    this._.space = [];
+  }
+
+  function seek() {
+    var vct = this.video.currentTime;
+    var dias = this.dialogues;
+    clear.call(this);
+    this._.index = (function () {
+      var from = 0;
+      var to = dias.length - 1;
+      while (from + 1 < to && vct > dias[(to + from) >> 1].end) {
+        from = (to + from) >> 1;
+      }
+      if (!from) { return 0; }
+      for (var i = from; i < to; i++) {
+        if (
+          dias[i].end > vct && vct >= dias[i].start ||
+          i && dias[i - 1].end < vct && vct < dias[i].start
+        ) {
+          return i;
+        }
+      }
+      return to;
+    })();
+    framing.call(this);
+  }
+
+  function bindEvents() {
+    var l = this._.listener;
+    l.play = play.bind(this);
+    l.pause = pause.bind(this);
+    l.seeking = seek.bind(this);
+    this.video.addEventListener('play', l.play);
+    this.video.addEventListener('pause', l.pause);
+    this.video.addEventListener('seeking', l.seeking);
+  }
+
+  function unbindEvents() {
+    var l = this._.listener;
+    this.video.removeEventListener('play', l.play);
+    this.video.removeEventListener('pause', l.pause);
+    this.video.removeEventListener('seeking', l.seeking);
+    l.play = null;
+    l.pause = null;
+    l.seeking = null;
+  }
+
+  function resize() {
+    var cw = this.video.clientWidth;
+    var ch = this.video.clientHeight;
+    var vw = this.video.videoWidth || cw;
+    var vh = this.video.videoHeight || ch;
+    var sw = this._.scriptRes.width;
+    var sh = this._.scriptRes.height;
+    var rw = sw;
+    var rh = sh;
+    var videoScale = Math.min(cw / vw, ch / vh);
+    if (this.resampling === 'video_width') {
+      rh = sw / vw * vh;
+    }
+    if (this.resampling === 'video_height') {
+      rw = sh / vh * vw;
+    }
+    this.scale = Math.min(cw / rw, ch / rh);
+    if (this.resampling === 'script_width') {
+      this.scale = videoScale * (vw / rw);
+    }
+    if (this.resampling === 'script_height') {
+      this.scale = videoScale * (vh / rh);
+    }
+    this.width = this.scale * rw;
+    this.height = this.scale * rh;
+    this._.resampledRes = { width: rw, height: rh };
+
+    this.container.style.cssText = "width:" + cw + "px;height:" + ch + "px;";
+    var cssText = (
+      "width:" + (this.width) + "px;" +
+      "height:" + (this.height) + "px;" +
+      "top:" + ((ch - this.height) / 2) + "px;" +
+      "left:" + ((cw - this.width) / 2) + "px;"
+    );
+    this._.$stage.style.cssText = cssText;
+    this._.$svg.style.cssText = cssText;
+    this._.$svg.setAttributeNS(null, 'viewBox', ("0 0 " + sw + " " + sh));
+
+    this._.$animation.innerHTML = getKeyframes.call(this);
+    seek.call(this);
+
+    return this;
+  }
+
+  var GLOBAL_CSS = '.ASS-container,.ASS-stage{position:relative;overflow:hidden}.ASS-container video{position:absolute;top:0;left:0}.ASS-stage{pointer-events:none;position:absolute}.ASS-dialogue{font-size:0;position:absolute}.ASS-fix-font-size{position:absolute;visibility:hidden}.ASS-fix-objectBoundingBox{width:100%;height:100%;position:absolute;top:0;left:0}.ASS-animation-paused *{-webkit-animation-play-state:paused!important;animation-play-state:paused!important}';
+
+  function init(source, video, options) {
+    if ( options === void 0 ) options = {};
+
+    this.scale = 1;
+
+    // private variables
+    this._ = {
+      index: 0,
+      stagings: [],
+      space: [],
+      listener: {},
+      $svg: createSVGEl('svg'),
+      $defs: createSVGEl('defs'),
+      $stage: document.createElement('div'),
+      $animation: document.createElement('style'),
+    };
+    this._.$svg.appendChild(this._.$defs);
+    this._.$stage.className = 'ASS-stage ASS-animation-paused';
+    this._.$animation.type = 'text/css';
+    this._.$animation.className = 'ASS-animation';
+    document.head.appendChild(this._.$animation);
+
+    this._.resampling = options.resampling || 'video_height';
+
+    this.container = options.container || document.createElement('div');
+    this.container.classList.add('ASS-container');
+    this.container.appendChild($fixFontSize);
+    this.container.appendChild(this._.$svg);
+    this._.hasInitContainer = !!options.container;
+
+    this.video = video;
+    bindEvents.call(this);
+    if (!this._.hasInitContainer) {
+      var isPlaying = !video.paused;
+      video.parentNode.insertBefore(this.container, video);
+      this.container.appendChild(video);
+      if (isPlaying && video.paused) {
+        video.play();
+      }
+    }
+    this.container.appendChild(this._.$stage);
+
+    var ref = compile(source);
+    var info = ref.info;
+    var width = ref.width;
+    var height = ref.height;
+    var dialogues = ref.dialogues;
+    this.info = info;
+    this._.scriptRes = {
+      width: width || video.videoWidth,
+      height: height || video.videoHeight,
+    };
+    this.dialogues = dialogues;
+
+    var $style = document.getElementById('ASS-global-style');
+    if (!$style) {
+      $style = document.createElement('style');
+      $style.type = 'text/css';
+      $style.id = 'ASS-global-style';
+      $style.appendChild(document.createTextNode(GLOBAL_CSS));
+      document.head.appendChild($style);
+    }
+
+    resize.call(this);
+
+    if (!this.video.paused) {
+      seek.call(this);
+      play.call(this);
+    }
+
+    return this;
+  }
+
+  function show() {
+    this._.$stage.style.visibility = 'visible';
+    return this;
+  }
+
+  function hide() {
+    this._.$stage.style.visibility = 'hidden';
+    return this;
+  }
+
+  function destroy() {
+    var this$1 = this;
+
+    pause.call(this);
+    clear.call(this);
+    unbindEvents.call(this, this._.listener);
+    if (!this._.hasInitContainer) {
+      var isPlay = !this.video.paused;
+      this.container.parentNode.insertBefore(this.video, this.container);
+      this.container.parentNode.removeChild(this.container);
+      if (isPlay && this.video.paused) {
+        this.video.play();
+      }
+    }
+    document.head.removeChild(this._.$animation);
+    // eslint-disable-next-line no-restricted-syntax
+    for (var key in this$1) {
+      if (Object.prototype.hasOwnProperty.call(this$1, key)) {
+        this$1[key] = null;
+      }
+    }
+
+    return this;
+  }
+
+  var regex = /^(video|script)_(width|height)$/;
+
+  function getter() {
+    return regex.test(this._.resampling) ? this._.resampling : 'video_height';
+  }
+
+  function setter(r) {
+    if (r === this._.resampling) { return r; }
+    if (regex.test(r)) {
+      this._.resampling = r;
+      this.resize();
+    }
+    return this._.resampling;
+  }
+
+  var ASS = function ASS(source, video, options) {
+    if (typeof source !== 'string' || !(video instanceof HTMLVideoElement)) {
+      return this;
+    }
+    return init.call(this, source, video, options);
+  };
+
+  var prototypeAccessors = { resampling: { configurable: true } };
+  ASS.prototype.resize = function resize$1 () {
+    return resize.call(this);
+  };
+  ASS.prototype.show = function show$1 () {
+    return show.call(this);
+  };
+  ASS.prototype.hide = function hide$1 () {
+    return hide.call(this);
+  };
+  ASS.prototype.destroy = function destroy$1 () {
+    return destroy.call(this);
+  };
+  prototypeAccessors.resampling.get = function () {
+    return getter.call(this);
+  };
+  prototypeAccessors.resampling.set = function (r) {
+    return setter.call(this, r);
+  };
+
+  Object.defineProperties( ASS.prototype, prototypeAccessors );
+
+  return ASS;
+
+})));
